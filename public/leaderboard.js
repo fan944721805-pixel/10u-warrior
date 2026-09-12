@@ -1,0 +1,14 @@
+const boardStyle=document.createElement('link');boardStyle.rel='stylesheet';boardStyle.href='leaderboard.css';document.head.append(boardStyle);
+const trophy='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3h8v6a4 4 0 0 1-8 0V3ZM8 5H4v3a4 4 0 0 0 4 4m8-7h4v3a4 4 0 0 1-4 4M12 13v5m-4 3v-3h8v3H8Z"/></svg>';
+for(const nav of [$('.desktop-nav'),$('.bottom-nav')]){const button=document.createElement('button');button.className='nav';button.dataset.page='leaderboard';button.innerHTML=(nav.classList.contains('bottom-nav')?trophy:'')+'战神榜';button.onclick=()=>page('leaderboard');nav.insertBefore(button,nav.querySelector('[data-page="reports"]'))}
+const boardData={
+ '10-week':[['claude',16.4,8,6],['gpt',9.2,8,5],['deepseek',-1,8,3]],
+ '10-all':[['gpt',12.6,24,17],['claude',10.8,24,16],['deepseek',3.4,24,13]],
+ '100-week':[['deepseek',11.8,6,4],['claude',7.6,6,4],['gpt',-2.1,6,2]],
+ '100-all':[['claude',9.7,18,12],['deepseek',6.3,18,10],['gpt',4.5,18,11]]
+};
+let boardBudget='10',boardPeriod='week';
+const signed=n=>(n>=0?'＋':'−')+Math.abs(n).toFixed(2)+'%';
+function drawBoard(){const rows=boardData[boardBudget+'-'+boardPeriod];$('#board-results').innerHTML=`<div class="board-podium">${rows.map(([id,rate,count,wins],i)=>{const m=models[id],provider=m.provider||id;return `<article class="podium-player place-${i+1}"><span class="podium-place">${i===0?trophy+'<span>本榜战神</span>':'NO. 0'+(i+1)}</span><span class="podium-ai-avatar avatar-${provider}" aria-hidden="true"></span><h2>${m.name}</h2><strong class="podium-return ${rate<0?'negative':''}">${signed(rate)}</strong><span class="podium-games">${count} 局</span></article>`}).join('')}</div><section class="card board-table"><table><caption class="sr-only">${boardBudget}U ${boardPeriod==='week'?'本周':'全部'} AI 排行，按平均单局收益率降序排列</caption><thead><tr><th scope="col">排名</th><th scope="col">AI</th><th scope="col">平均收益</th><th scope="col">盈利局</th></tr></thead><tbody>${rows.map(([id,rate,count,wins],i)=>{const m=models[id],provider=m.provider||id;return `<tr><td><span class="table-rank ${i===0?'first':''}">0${i+1}</span></td><th scope="row"><span class="table-model"><span class="mini-ai-avatar avatar-${provider}" aria-hidden="true"></span>${m.name}</span></th><td class="${rate<0?'negative':'positive'}">${signed(rate)}</td><td>${wins}<span class="table-muted"> / ${count}</span></td></tr>`}).join('')}</tbody></table></section>`}
+$$('[data-board-budget]').forEach(b=>b.onclick=()=>{boardBudget=b.dataset.boardBudget;$$('[data-board-budget]').forEach(x=>{const active=x===b;x.classList.toggle('selected',active);x.setAttribute('aria-pressed',String(active))});drawBoard()});
+$$('[data-period]').forEach(b=>b.onclick=()=>{boardPeriod=b.dataset.period;$$('[data-period]').forEach(x=>{const active=x===b;x.classList.toggle('selected',active);x.setAttribute('aria-pressed',String(active))});drawBoard()});drawBoard();

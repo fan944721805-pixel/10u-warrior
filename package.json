@@ -1,0 +1,19 @@
+{
+  "name": "10u-warrior",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "engines": { "node": ">=22" },
+  "description": "10U 战神：移动端优先的 AI 对局与 Binance Agentic Wallet 应用",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "check": "node --check server.js && node --check public/app.js && node --check public/agent-setup.js && node --check public/wallet.js && node --check public/orb-arena.js && node --check public/leaderboard.js && node --check public/ai-api.js && node --check public/i18n.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@binance/agentic-wallet": "1.10.0",
+    "ethers": "6.17.0",
+    "qrcode": "1.5.4"
+  }
+}
