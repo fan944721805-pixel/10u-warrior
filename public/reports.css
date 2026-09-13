@@ -1,0 +1,86 @@
+/* Report-only layout: summary first, expandable supporting evidence. */
+#reports .page-heading { margin-bottom:20px; }
+#reports .page-heading h1 { margin:0; font-size:28px; letter-spacing:-.5px; }
+#reports .report-card { max-width:none; padding:0; border:0; border-radius:0; background:none; box-shadow:none; overflow:visible; font-variant-numeric:tabular-nums; }
+#reports .report-summary { padding:24px; gap:24px; border:1px solid #ded0e9; border-bottom:0; border-radius:22px 22px 0 0; background:linear-gradient(120deg,#fffdfd,#f4ecfc); }
+#reports .report-summary-copy { display:flex; align-items:center; flex-wrap:wrap; gap:10px; }
+#reports .report-summary-copy h2 { margin:0; font-size:24px; }
+#reports .report-summary-copy p { flex-basis:100%; margin:0; color:#8c789b; font-size:12px; }
+#reports .report-summary-profit { min-width:0; flex-shrink:0; padding:0; border:0; }
+#reports .report-summary-profit > span { font-size:12px; }
+#reports .report-summary-profit strong { margin:6px 0 0; font-size:36px; line-height:1.15; letter-spacing:-1px; }
+#reports .report-metrics { border:1px solid #ded0e9; border-top:1px solid #ebe2f1; border-radius:0 0 22px 22px; background:#fffdfd; box-shadow:0 3px 0 #e5daee; }
+#reports .report-metric { min-width:0; padding:16px 24px; }
+#reports .report-metric > span { color:#8c789b; font-size:12px; }
+#reports .report-metric strong { margin-top:6px; font-size:18px; overflow-wrap:anywhere; }
+#reports .report-agents, #reports .report-orders { padding:0; margin-top:28px; border:0; }
+#reports h3 { font-size:16px; font-weight:750; }
+#reports .report-agent-list { gap:12px; margin-top:12px; }
+#reports .report-agent { padding:18px; gap:18px 10px; border-color:#dfd0eb; border-radius:18px; background:#fffcff; }
+#reports .report-agent-copy strong { font-size:15px; white-space:normal; overflow-wrap:anywhere; }
+#reports .report-agent-copy small { font-size:11px; }
+#reports .report-agent-stat { min-width:0; }
+#reports .report-agent-stat > span { color:#8c789b; font-size:11px; }
+#reports .report-agent-stat strong { font-size:14px; overflow-wrap:anywhere; white-space:normal; }
+#reports .report-orders-top { margin-bottom:12px; }
+#reports .report-orders-title { display:flex; align-items:baseline; flex-wrap:wrap; gap:8px 12px; }
+#reports .report-orders-title small { font-size:12px; color:#8c789b; }
+#reports .report-order-count { font-size:12px; flex-shrink:0; }
+#reports .report-order-list { border:1px solid #ded0e9; border-radius:18px; background:#fffdfd; }
+#reports .report-order { display:block; padding:0; border-radius:0; background:transparent; }
+#reports .report-order-heading { position:relative; display:grid; grid-template-columns:minmax(0,1.3fr) minmax(0,.7fr) minmax(0,1fr) minmax(0,1fr); align-items:center; gap:16px; min-height:80px; padding:16px 42px 16px 20px; cursor:pointer; list-style:none; }
+#reports .report-order-heading::-webkit-details-marker { display:none; }
+#reports .report-order-heading::after { content:''; position:absolute; right:20px; top:50%; width:6px; height:6px; border-right:1.5px solid #9a7dad; border-bottom:1.5px solid #9a7dad; transform:translateY(-70%) rotate(45deg); }
+#reports .report-order-details[open] > summary::after { transform:rotate(225deg); }
+#reports .report-order-heading:hover, #reports .report-order-details[open] > summary { background:#f6f0fb; }
+#reports summary:focus-visible { outline:3px solid #9874bc; outline-offset:-3px; border-radius:10px; }
+#reports .report-order-agent strong { font-size:14px; overflow-wrap:anywhere; }
+#reports .report-order-money { text-align:right; }
+#reports .report-order-money strong { font-size:15px; }
+#reports .report-order small { font-size:11px; }
+#reports .report-order-status { font-size:11px; line-height:1.5; }
+#reports .report-order-body { padding:4px 20px 16px; border-top:1px solid #ebe2f1; background:#fcf9ff; }
+#reports .bet-return-panel { margin:12px 0; padding:14px; border:1px solid #e6dfbf; background:#faf8ec; }
+#reports .settlement-summary { padding:4px 0; }
+#reports .audit-details > summary { color:#735586; font-size:13px; min-height:48px; }
+#reports .audit-details pre { padding:14px; border-radius:12px; background:#f1eaf7; }
+#reports .report-order-body > button { min-height:48px; padding:10px 16px; margin-top:12px; border-radius:12px; font-size:13px; }
+#reports .report-history-toggle { margin-top:12px; background:#f0e7f8; border-color:#ded0e9; font-size:13px; }
+#reports .report-audit { margin-top:12px; padding:0 20px; border:1px solid #ded0e9; border-radius:16px; background:#fffcff; }
+#reports .report-audit > summary { display:list-item; min-height:56px; padding:17px 0; cursor:pointer; color:#735586; font-size:14px; font-weight:700; }
+#reports .report-audit > summary span { margin-left:12px; font-size:12px; }
+#reports .report-audit[open] { padding-bottom:16px; }
+#reports .report-audit > div { margin:12px 0; padding:12px; border-radius:12px; background:#f6f0fa; }
+#reports .report-empty { padding:20px; color:#8c789b; }
+@media(max-width:760px) {
+  #reports .page-heading { margin-bottom:16px; }
+  #reports .page-heading h1 { font-size:24px; }
+  #reports .report-summary { display:flex; flex-direction:row; align-items:center; padding:18px; gap:16px; }
+  #reports .report-summary-copy h2 { font-size:20px; }
+  #reports .report-summary-profit { text-align:right; }
+  #reports .report-summary-profit strong { font-size:28px; }
+  #reports .report-metric { padding:14px 12px; }
+  #reports .report-metric > span { font-size:11px; }
+  #reports .report-metric strong { font-size:15px; }
+  #reports .report-agents, #reports .report-orders { margin-top:24px; }
+  #reports .report-agent-list { grid-template-columns:1fr; gap:8px; }
+  #reports .report-agent { grid-template-columns:minmax(0,1.3fr) repeat(3,minmax(0,1fr)); align-items:center; gap:8px; padding:14px; }
+  #reports .report-agent-identity { grid-column:auto; gap:8px; }
+  #reports .report-agent-copy strong { font-size:13px; }
+  #reports .report-agent-stat strong { font-size:13px; }
+  #reports .report-order-heading { grid-template-columns:minmax(0,1fr) minmax(0,1fr); grid-template-rows:auto auto; gap:10px; padding:14px 32px 14px 14px; }
+  #reports .report-order-heading::after { right:14px; }
+  #reports .report-order-agent { grid-column:1; grid-row:1; }
+  #reports .report-order-money { grid-column:2; grid-row:1; }
+  #reports .report-order-market { grid-column:1; grid-row:2; }
+  #reports .report-order-status { grid-column:2; grid-row:2; max-width:100%; }
+  #reports .report-order-body { padding:4px 14px 14px; }
+  #reports .report-audit { padding:0 16px; }
+}
+@media(max-width:480px) {
+  #reports .report-summary { align-items:flex-start; flex-direction:column; gap:18px; }
+  #reports .report-summary-profit { text-align:left; }
+  #reports .report-summary-profit strong { font-size:34px; }
+  #reports .report-agent { grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+  #reports .report-agent-identity { grid-column:1/-1; }
+}

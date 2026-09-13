@@ -1,0 +1,97 @@
+/* Agent detail: pending orders first; evidence and parameters on demand. */
+.agent-equity-chart { margin:12px 0; padding:14px; border:1px solid #ded0ea; border-radius:16px; background:linear-gradient(150deg,#fcfaff,#f3ecfa); }
+.equity-chart-heading { display:flex; justify-content:space-between; align-items:center; gap:12px; color:#523466; font-size:14px; }
+.equity-chart-heading > span { font-size:10px; color:#897299; }
+.equity-chart-stats { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin:16px 0 6px; }
+.equity-chart-stats small { display:block; color:#897299; font-size:11px; margin-bottom:5px; }
+.equity-chart-stats strong { color:#58346f; font-size:17px; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.agent-equity-chart svg { display:block; width:100%; height:auto; overflow:visible; touch-action:pan-y; cursor:crosshair; }
+.equity-grid { stroke:#e6dcec; stroke-dasharray:3 5; }
+.equity-axis { fill:#947fa3; font-size:10px; }
+.equity-area { fill:#a274cd; opacity:.12; }
+.equity-line { fill:none; stroke:#8850b6; stroke-width:2.5; stroke-linejoin:round; }
+.equity-deposit { fill:#e8ff70; stroke:#6d8131; stroke-width:1.5; }
+.equity-guide { stroke:#b198c5; stroke-dasharray:3 3; }
+.equity-point { fill:#fff; stroke:#8850b6; stroke-width:2.5; }
+.equity-chart-readout { display:flex; flex-wrap:wrap; align-items:baseline; gap:5px 8px; min-height:26px; font-size:11px; color:#897299; }
+.equity-chart-readout strong { margin-left:auto; color:#58346f; font-size:13px; font-variant-numeric:tabular-nums; }
+.equity-chart-slider { display:block; width:100%; min-height:48px; margin:0; accent-color:#8850b6; cursor:ew-resize; }
+.equity-chart-slider:focus-visible { outline:2px solid #8850b6; outline-offset:2px; border-radius:6px; }
+.equity-chart-note { margin:6px 0 0; color:#897299; font-size:11px; line-height:1.65; }
+.equity-chart-legend { display:flex; align-items:center; gap:6px; }
+.equity-chart-legend i { width:8px; height:8px; border-radius:50%; background:#e8ff70; border:1px solid #7c9344; }
+.bet-reference { flex-wrap:wrap; }
+.bet-reference strong { color:#624b73; font-variant-numeric:tabular-nums; }
+.bet-reference-note { display:block; margin:5px 0 12px; color:#8c789b; font-size:10px; line-height:1.5; }
+#detail-dialog { max-width:520px; padding:20px; border:1px solid #d8c4e6; border-radius:20px; }
+#detail-dialog > .dialog-top { position:absolute; right:20px; top:20px; z-index:1; background:none; padding:0; }
+#detail-dialog > .dialog-top > span { display:none; }
+#detail-dialog .close-dialog { width:48px; height:48px; border:1px solid #e0d2eb; border-radius:12px; color:#795e8d; background:#fff; }
+#detail-dialog .detail-model { margin:0 56px 12px 0; min-height:48px; gap:10px; }
+#detail-dialog .detail-model > div { min-width:0; }
+#detail-dialog .detail-model h2 { font-size:22px; line-height:1.4; overflow-wrap:anywhere; }
+#detail-dialog .detail-model p { font-size:12px; margin:4px 0 0; color:#8c789b; }
+#detail-dialog .detail-ai-avatar { width:48px; height:48px; flex-basis:48px; }
+#detail-dialog .agent-order-details { display:grid; gap:10px; margin:0 0 12px; padding:0; border:0; }
+#detail-dialog .detail-order-card { padding:14px; border:1px solid #ded0ea; border-radius:14px; background:#fff; }
+.detail-order-meta, .detail-order-heading, .detail-order-odds { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.detail-order-meta { color:#8c789b; font-size:11px; }
+.detail-order-meta .subtle-chip { color:#677632; background:#f0f6d5; }
+.detail-order-heading { margin:10px 0 8px; color:#493052; }
+.detail-order-heading > strong { font-size:24px; font-variant-numeric:tabular-nums; }
+.detail-order-heading > div { display:flex; align-items:center; gap:8px; }
+.detail-order-heading > div > strong { font-size:16px; }
+.detail-order-heading > div > span, .detail-order-odds { color:#8c789b; font-size:12px; }
+#detail-dialog .bet-reference-note { margin:4px 0 8px; font-size:11px; }
+#detail-dialog .compact-return { margin:10px 0 0; padding:0; background:none; border-radius:0; }
+.return-outcomes { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.return-outcomes > div { display:grid; gap:4px; padding:10px 12px; border-radius:10px; background:#f3f7e8; }
+.return-outcomes > div:last-child { background:#fdf0f3; }
+.return-outcomes span { color:#8c789b; font-size:12px; }
+.return-outcomes strong { font-size:20px; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.return-payout { display:flex; justify-content:space-between; align-items:center; gap:12px; margin:10px 0 4px; font-size:12px; color:#8c789b; }
+.return-payout strong { color:#624b73; white-space:nowrap; }
+#detail-dialog .compact-return > small { font-size:11px; color:#9a88a5; line-height:1.6; }
+#detail-dialog .decision-featured { margin:0 0 12px; padding:12px 14px; background:#f4edf9; border:0; border-radius:14px; }
+#detail-dialog .decision-meta { font-size:11px; color:#9a88a5; }
+#detail-dialog .decision-headline { margin:6px 0; gap:12px; align-items:center; }
+#detail-dialog .decision-headline h3 { font-size:18px; line-height:1.5; }
+#detail-dialog .decision-headline > div > small { font-size:12px; letter-spacing:0; }
+#detail-dialog .decision-headline > strong { display:flex; align-items:baseline; justify-content:flex-end; flex-wrap:wrap; gap:5px; font-size:22px; }
+#detail-dialog .decision-headline > strong small { font-size:11px; }
+#detail-dialog .decision-featured > p { margin:0; font-size:13px; line-height:1.6; overflow-wrap:anywhere; }
+#detail-dialog .detail-disclosure { margin:8px 0 0; border:1px solid #e1d4eb; border-radius:12px; }
+#detail-dialog .detail-disclosure > summary { display:flex; align-items:center; gap:10px; min-height:48px; padding:10px 12px; margin:0; cursor:pointer; color:#6d517f; font-size:13px; font-weight:650; list-style:none; }
+#detail-dialog .detail-disclosure > summary::-webkit-details-marker { display:none; }
+#detail-dialog .detail-disclosure > summary::after { content:'+'; margin-left:auto; font-size:18px; color:#977aa9; }
+#detail-dialog .detail-disclosure[open] > summary::after { content:'−'; }
+#detail-dialog summary:focus-visible { outline:3px solid #a287c4; outline-offset:-3px; border-radius:14px; }
+#detail-dialog .indicator-heading strong { font-size:13px; }
+#detail-dialog .indicator-heading span { margin-left:auto; font-size:10px; }
+#detail-dialog .indicator-heading::after { margin-left:auto; }
+#detail-dialog .indicator-snapshot { padding:0 12px 12px; }
+#detail-dialog .indicator-snapshot > div { padding:10px; border:0; background:#f5eff9; }
+#detail-dialog .indicator-snapshot span { font-size:11px; }
+#detail-dialog .indicator-snapshot strong { font-size:12px; }
+#detail-dialog .decision-policy { grid-template-columns:repeat(2,minmax(0,1fr)); margin:0; padding:0 12px 12px; }
+#detail-dialog .decision-policy > div { background:#f5eff9; padding:12px 6px; }
+#detail-dialog .decision-policy span { color:#8c789b; font-size:11px; }
+#detail-dialog .decision-policy strong { color:#624b73; font-size:13px; }
+#detail-dialog .dialog-note { margin-top:12px!important; font-size:11px; }
+@media(max-width:480px) {
+  #detail-dialog { padding:16px; }
+  #detail-dialog > .dialog-top { top:16px; right:16px; }
+  #detail-dialog .detail-model h2 { font-size:20px; }
+  #detail-dialog .detail-order-card { padding:12px; }
+  .detail-order-heading > strong { font-size:22px; }
+  .return-outcomes > div { padding:10px; }
+  .return-outcomes strong { font-size:18px; }
+}
+#detail-dialog .divination-reading { margin-top:12px; padding-top:12px; border-top:1px solid #e3d5ee; }
+#detail-dialog .divination-reading > strong { font-size:12px; color:#75558e; }
+#detail-dialog .divination-reading > p { margin:6px 0; font-size:14px; line-height:1.6; color:#513963; }
+#detail-dialog .divination-reading > small { display:block; margin-top:4px; font-size:10px; color:#927da2; }
+
+.detail-ai-model {display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 12px; margin:8px 0 0; font-size:13px; color:#796488;}
+.detail-ai-model strong {font-weight:600; color:#493052; overflow-wrap:anywhere; min-width:0;}
+.detail-model > div {min-width:0;}

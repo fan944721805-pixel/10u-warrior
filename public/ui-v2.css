@@ -1,0 +1,1036 @@
+/* Compact quote: keep source context on hover and exceptional states visible. */
+#simulation-commandbar #sim-source,
+#simulation-commandbar #sim-market,
+#simulation-commandbar #sim-next,
+#simulation-commandbar #sim-ai-mode,
+#simulation-commandbar .mobile-market-details { display: none; }
+#simulation-commandbar .paper-panel {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px 20px;
+  padding: 8px 18px;
+  border: 0;
+  background: transparent;
+}
+#simulation-commandbar #sim-asset { grid-column: 1; grid-row: 1; }
+#simulation-commandbar #live-price-panel {
+  grid-column: 1; grid-row: 2;
+  padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none;
+}
+#simulation-commandbar .live-price-value { font-size: 36px; font-weight: 850; letter-spacing: -1px; line-height: 1.2; margin: 0; align-self: baseline; }
+#simulation-commandbar .live-price-caption { display: block; font-size: 11px; color: #8a7599; margin-bottom: 5px; }
+#simulation-commandbar .live-price-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+#simulation-commandbar .live-price-unit { color: #8a7599; font-size: 12px; font-weight: 650; }
+#simulation-commandbar .live-price-meta { margin-top: 10px; gap: 10px; align-items: center; font-size: 11px; }
+#simulation-commandbar .live-price-meta > span { display: inline-flex; align-items: center; gap: 6px; }
+#simulation-commandbar .live-price-meta > span::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: #b49a79; flex-shrink: 0; }
+#simulation-commandbar [data-state=live] .live-price-meta > span { color: #587436; }
+#simulation-commandbar [data-state=live] .live-price-meta > span::before { background: #7fa445; box-shadow: 0 0 0 3px #dfeecc; }
+#simulation-commandbar .live-price-time { color: #a090ad; font-variant-numeric: tabular-nums; }
+#simulation-commandbar #sim-strategy-lab { grid-column: 2; grid-row: 1 / span 2; align-self: center; width: auto; background: #f9f5ff; border: 1px solid #d1bce3; box-shadow: 0 2px 0 #e0d2eb; }
+#simulation-commandbar .sim-battles { background: transparent; border: 0; border-left: 1px solid #dccde8; border-radius: 0; padding: 16px 12px 16px 24px; }
+#simulation-commandbar #sim-create { gap: 12px; }
+#simulation-commandbar #sim-create button { min-height: 52px; border-radius: 14px; }
+#simulation-commandbar #sim-create button.launch-battle {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 52px; padding: 10px 18px; border: 1px solid #b3c765; border-radius: 12px;
+  background: #e3fa79; color: #402655;
+  box-shadow: 0 2px 0 #c5d495; font-size: 15px; font-weight: 750; line-height: 1.25;
+  transition: transform 140ms ease, box-shadow 140ms ease; cursor: pointer;
+}
+#sim-create .launch-battle-mark { display: grid; place-items: center; width: 18px; height: 18px; flex: 0 0 18px; color: inherit; }
+#sim-create .launch-battle-mark svg { width: 18px; height: 18px; fill: currentColor; }
+#sim-create .launch-battle-bang { margin-left: -6px; font-size: inherit; font-weight: inherit; line-height: inherit; }
+#simulation-commandbar #sim-create button.launch-battle:focus-visible { outline: 3px solid #9366be; outline-offset: 5px; }
+@media (hover: hover) {
+  #simulation-commandbar #sim-create button.launch-battle:hover { transform: translateY(-1px); box-shadow: 0 3px 0 #c5d495; }
+}
+#simulation-commandbar #sim-create button.launch-battle:active { transform: translateY(1px); box-shadow: none; }
+@media (prefers-reduced-motion: reduce) {
+  #simulation-commandbar #sim-create button.launch-battle { transition: none; }
+}
+#simulation-commandbar #sim-reset { background: #fff8fc; border-color: #dfc7d6; color: #94627b; }
+#simulation-commandbar #sim-error { grid-column: 1 / -1; }
+@media (min-width: 761px) and (max-width: 900px) {
+  #simulation-commandbar .sim-battles { border-left: 0; border-bottom: 1px solid #dccde8; padding: 12px; }
+}
+@media (max-width: 760px) {
+  #simulation-commandbar .live-price-value { font-size: 32px; }
+  #simulation-commandbar .paper-panel { padding: 16px; gap: 12px; border-top: 1px solid #e4d8ed; }
+  #simulation-commandbar #live-price-panel { grid-column: 1 / -1; }
+  #simulation-commandbar #sim-strategy-lab { grid-row: 1; }
+  #simulation-commandbar .sim-battles { border: 0; padding: 12px; }
+}
+
+.simulation-commandbar {
+  display: grid;
+  grid-template-columns: minmax(310px, 1fr) minmax(390px, 1.45fr);
+  align-items: stretch;
+  gap: 14px;
+  margin-bottom: 24px;
+  padding: 14px;
+  border: 1.5px solid #d6c5e5;
+  border-radius: 22px;
+  background: linear-gradient(135deg, #fffafdcc, #f0e8ffcc);
+  box-shadow: 0 5px 0 #dfd2eb;
+}
+
+.simulation-commandbar .sim-battles,
+.simulation-commandbar .paper-panel {
+  min-width: 0;
+  margin: 0;
+  padding: 13px;
+  border: 1px solid #e0d5e9;
+  border-radius: 16px;
+  background: #fffafdd9;
+}
+
+.simulation-commandbar .sim-battles {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: center;
+  gap: 8px 10px;
+}
+
+.simulation-commandbar .sim-battles form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+#sim-create #sim-reset { background: #fff8fc; color: #855066; border-color: #dbc0cf; box-shadow: none; }
+
+.simulation-commandbar .sim-battles small,
+.simulation-commandbar #sim-action-error {
+  grid-column: 1 / -1;
+}
+
+.simulation-commandbar .paper-panel {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-content: center;
+  gap: 6px 14px;
+}
+
+.simulation-commandbar .paper-panel strong {
+  align-self: center;
+}
+
+.simulation-commandbar .paper-panel > span:nth-of-type(1) {
+  align-self: center;
+}
+
+.simulation-commandbar #sim-market,
+.simulation-commandbar #sim-next {
+  font-variant-numeric: tabular-nums;
+}
+
+.simulation-commandbar #sim-strategy-lab {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  align-self: center;
+  margin: 0;
+}
+
+.simulation-commandbar .paper-panel small,
+.simulation-commandbar #sim-error {
+  grid-column: 1 / span 2;
+}
+
+main {
+  padding-top: 34px;
+}
+
+.desktop-nav .nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+@media (min-width: 901px) {
+  .simulation-commandbar {
+    grid-template-columns: minmax(390px, 1.45fr) minmax(310px, 1fr);
+  }
+
+  .simulation-commandbar > .paper-panel { grid-column: 1; grid-row: 1; }
+  .simulation-commandbar > .sim-battles { grid-column: 2; grid-row: 1; }
+
+  .topbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    justify-content: normal;
+  }
+
+  .topbar .brand { justify-self: start; }
+  .topbar .desktop-nav { justify-self: center; }
+  .topbar .top-right { justify-self: end; }
+}
+
+.page-heading {
+  margin-bottom: 24px;
+}
+
+.orb-arena {
+  height: 270px;
+}
+
+body[data-rule-ai="true"] .model-card {
+  min-height: 218px;
+  cursor: pointer;
+}
+
+body[data-rule-ai="true"] .model-card:focus-visible {
+  outline: 3px solid #7959a0;
+  outline-offset: 4px;
+}
+
+.is-positive { color: #237c69 !important; }
+.is-negative { color: #ae5b6f !important; }
+.is-flat { color: #756b7d !important; }
+
+#board-results {
+  display: grid;
+  gap: 18px;
+}
+
+.board-empty {
+  margin: 0;
+  padding: 40px 24px;
+  color: #887794;
+  text-align: center;
+}
+
+.board-champion {
+  display: flex;
+  max-width: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 22px 26px;
+  overflow: hidden;
+  border-color: #cfdc8e;
+  background: linear-gradient(110deg, #fbffe7 0%, #fff 58%, #fbf7ff 100%);
+  box-shadow: 0 4px 0 #dae7a4;
+}
+
+.board-champion-identity,
+.board-rank-identity {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.board-champion-identity { gap: 15px; }
+.board-rank-identity { gap: 11px; }
+
+.board-champion-rank {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  place-items: center;
+  border: 1px solid #aabd58;
+  border-radius: 12px;
+  background: #e3f879;
+  color: #4e5e26;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.board-champion-avatar {
+  width: 58px;
+  height: 58px;
+  border-radius: 18px;
+}
+
+.board-champion-copy,
+.board-rank-copy { min-width: 0; }
+
+.board-kicker {
+  color: #758444;
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: .8px;
+}
+
+.board-champion-copy h2,
+.board-list-top h2 {
+  margin: 0;
+  color: #3d2e48;
+}
+
+.board-champion-copy h2 {
+  margin-top: 4px;
+  font-size: 21px;
+}
+
+.board-champion-copy p {
+  margin: 3px 0 0;
+  color: #907f99;
+  font-size: 11px;
+}
+
+.board-champion-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.board-champion-stat {
+  min-width: 130px;
+  padding: 11px 15px;
+  border-left: 1px solid #e6dfee;
+}
+
+.board-champion-stat span,
+.board-champion-stat small,
+.board-rank-value small,
+.report-summary-profit span,
+.report-summary-profit small,
+.report-metric span,
+.report-agent-stat span {
+  display: block;
+  color: #97879f;
+  font-size: 10px;
+}
+
+.board-champion-stat strong {
+  display: inline-block;
+  margin-top: 5px;
+  color: #46364e;
+  font-size: 20px;
+}
+
+.board-champion-stat small {
+  display: inline-block;
+  margin-left: 6px;
+}
+
+.board-list {
+  max-width: none;
+  padding: 0;
+  overflow: hidden;
+}
+
+.board-list-top {
+  display: flex;
+  min-height: 70px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 24px;
+  border-bottom: 1px solid #ece4f1;
+}
+
+.board-list-top h2 { font-size: 18px; }
+
+.board-entry-count {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  color: #95849f;
+  font-size: 11px;
+}
+
+.board-entry-count strong {
+  color: #594465;
+  font-size: 16px;
+}
+
+.board-list-labels,
+.board-rank-row {
+  display: grid;
+  grid-template-columns: 56px minmax(220px, 1fr) minmax(125px, .6fr) minmax(110px, .5fr);
+  align-items: center;
+  gap: 14px;
+}
+
+.board-list-labels {
+  min-height: 38px;
+  padding: 0 24px;
+  background: #faf7fc;
+  color: #9a8ba3;
+  font-size: 10px;
+}
+
+.board-list-labels span:nth-child(n + 3) { text-align: right; }
+.board-list-labels span:nth-child(2) { padding-left: 49px; }
+
+.board-ranking {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.board-rank-row {
+  min-height: 68px;
+  padding: 10px 24px;
+  border-top: 1px solid #f0e9f3;
+}
+
+.board-rank-row:first-child { border-top: 0; }
+.board-rank-row.is-leading { background: #fcfee9; }
+
+.board-rank-number {
+  color: #9c89a6;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.board-rank-row.is-leading .board-rank-number { color: #687a33; }
+
+.board-rank-row .mini-ai-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+}
+
+.board-rank-copy strong,
+.board-rank-copy small,
+.board-rank-value strong,
+.board-rank-value small {
+  display: block;
+}
+
+.board-rank-copy strong {
+  overflow: hidden;
+  color: #493852;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-rank-copy small {
+  margin-top: 4px;
+  overflow: hidden;
+  color: #9a8ba2;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-rank-number,
+.board-rank-value,
+.report-summary-profit,
+.report-metric strong,
+.report-agent-stat strong,
+.report-order-money {
+  font-variant-numeric: tabular-nums;
+}
+
+.board-rank-value { text-align: right; }
+
+.board-rank-value strong {
+  color: #4b3a53;
+  font-size: 13px;
+}
+
+.board-rank-value small { margin-top: 3px; }
+
+.report-card {
+  max-width: 1100px;
+  padding: 0;
+  overflow: hidden;
+  text-align: left;
+}
+
+.report-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 28px;
+  padding: 25px 28px;
+  border-bottom: 1px solid #e9e1ed;
+  background: linear-gradient(115deg, #fff 0%, #fcf8ff 100%);
+}
+
+.report-summary-copy { min-width: 0; }
+
+.report-summary-copy h2 {
+  margin: 9px 0 4px;
+  color: #3e2e48;
+  font-size: 24px;
+}
+
+.report-summary-copy p { margin: 0; }
+
+.report-summary-profit {
+  min-width: 210px;
+  text-align: right;
+}
+
+.report-summary-profit strong {
+  display: block;
+  margin: 4px 0;
+  font-size: 34px;
+  letter-spacing: -1px;
+}
+
+.report-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border-bottom: 1px solid #e9e1ed;
+}
+
+.report-metric {
+  padding: 17px 28px;
+  border-right: 1px solid #eee7f1;
+}
+
+.report-metric:last-child { border-right: 0; }
+
+.report-metric strong {
+  display: block;
+  margin-top: 5px;
+  color: #4a3953;
+  font-size: 17px;
+}
+
+.report-agents,
+.report-orders { padding: 23px 28px; }
+
+.report-agents h3,
+.report-orders h3 {
+  margin: 0;
+  color: #4a3656;
+  font-size: 15px;
+}
+
+.report-agent-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.report-agent {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 13px 8px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid #e9e0ee;
+  border-radius: 15px;
+  background: #fff;
+}
+
+.report-agent-identity {
+  display: flex;
+  grid-column: 1 / -1;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+}
+
+.report-agent-copy { min-width: 0; }
+
+.report-agent-copy strong,
+.report-agent-copy small,
+.report-agent-stat strong { display: block; }
+
+.report-agent-copy strong {
+  overflow: hidden;
+  color: #493750;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.report-agent-copy small {
+  margin-top: 3px;
+  color: #9989a1;
+  font-size: 10px;
+}
+
+.report-agent-stat strong {
+  margin-top: 4px;
+  color: #4d3c55;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.report-orders { border-top: 1px solid #eee7f1; }
+
+.report-orders-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.report-order-count {
+  display: flex;
+  gap: 4px;
+  color: #9a8ba2;
+  font-size: 11px;
+}
+
+.report-order-list {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid #e9e1ed;
+  border-radius: 14px;
+}
+
+.report-order {
+  display: grid;
+  /* Content-independent tracks keep every order aligned, including long statuses. */
+  grid-template-columns: minmax(130px, .9fr) minmax(90px, .65fr) minmax(105px, .65fr) minmax(140px, .6fr);
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px 14px;
+  border-bottom: 1px solid #eee8f1;
+  background: #fff;
+}
+
+.report-order:last-child { border-bottom: 0; }
+
+.report-order-agent,
+.report-order-market,
+.report-order-money,
+.report-order-status {
+  min-width: 0;
+}
+
+.report-order-agent strong,
+.report-order-agent small,
+.report-order-market strong,
+.report-order-market small,
+.report-order-money strong,
+.report-order-money small {
+  display: block;
+}
+
+.report-order-agent strong,
+.report-order-market strong,
+.report-order-money strong {
+  color: #483254;
+  font-size: 13px;
+}
+
+.report-order-agent small,
+.report-order-market small,
+.report-order-money small {
+  margin-top: 3px;
+  color: #98879f;
+  font-size: 10px;
+}
+
+.report-direction {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: #e8f4c1;
+  color: #50632a;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.report-direction.is-down {
+  background: #ffe2ee;
+  color: #92506e;
+}
+
+.report-order-status {
+  justify-self: end;
+  max-width: 100%;
+  padding: 6px 9px;
+  border-radius: 9px;
+  background: #eee7f5;
+  color: #6d557a;
+  font-size: 10px;
+  font-weight: 750;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.report-order[data-status="WON"] .report-order-status {
+  background: #e9f6b7;
+  color: #51652b;
+}
+
+.report-order[data-status="LOST"] .report-order-status {
+  background: #ffe1e7;
+  color: #994e60;
+}
+
+.report-history-toggle {
+  width: 100%;
+  min-height: 48px;
+  margin-top: 12px;
+  border-radius: 13px;
+  font-size: 12px;
+}
+
+.language-toggle,
+.character-mode-switch button {
+  min-height: 48px !important;
+}
+
+/* The live simulation owns the ranking data, so its navigation entry stays available. */
+body[data-rule-ai="true"] .desktop-nav [data-page="leaderboard"],
+body[data-rule-ai="true"] .bottom-nav [data-page="leaderboard"] {
+  display: flex !important;
+}
+
+@media (min-width: 761px) and (max-width: 900px) {
+  .topbar {
+    height: 72px;
+    padding: 0 24px;
+    gap: 14px;
+  }
+
+  .desktop-nav,
+  .demo-label {
+    display: none;
+  }
+
+  .brand {
+    font-size: 25px;
+  }
+
+  .brand span {
+    display: inline-block !important;
+    margin-left: 0;
+    padding: 5px 8px;
+    font-size: 17px;
+  }
+
+  main {
+    width: auto;
+    padding: 28px 24px 108px;
+  }
+
+  .bottom-nav {
+    position: fixed;
+    z-index: 30;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    justify-content: space-around;
+    align-items: center;
+    padding: 10px 22px calc(11px + env(safe-area-inset-bottom));
+    border-top: 1px solid #d7c5e5;
+    background: #faf4ffef;
+    backdrop-filter: blur(24px);
+  }
+
+  .bottom-nav .nav {
+    display: flex;
+    min-width: 88px;
+    min-height: 52px;
+    padding: 0 12px;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    font-size: 11px;
+  }
+
+  .bottom-nav svg {
+    width: 21px;
+    height: 21px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.6;
+  }
+
+  .simulation-commandbar {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .icon-button.close-dialog,
+  #close-agent-editor,
+  .agent-editor .agent-option-grid button,
+  .agent-editor-actions button {
+    min-height: 48px !important;
+  }
+
+  .icon-button.close-dialog,
+  #close-agent-editor {
+    min-width: 48px !important;
+  }
+
+  .agent-settings-button {
+    width: 48px !important;
+    height: 48px !important;
+    right: 0 !important;
+    bottom: 0 !important;
+  }
+
+  main {
+    padding-top: 18px;
+  }
+
+  .simulation-commandbar {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    margin-bottom: 22px;
+    padding: 10px;
+    border-radius: 19px;
+  }
+
+  .simulation-commandbar .sim-battles,
+  .simulation-commandbar .paper-panel {
+    padding: 11px;
+  }
+
+  .simulation-commandbar .sim-battles {
+    grid-template-columns: 1fr;
+  }
+
+  .simulation-commandbar .sim-battles form,
+  .simulation-commandbar .sim-battles small,
+  .simulation-commandbar #sim-action-error {
+    grid-column: 1;
+  }
+
+  .simulation-commandbar .paper-panel {
+    grid-template-columns: 1fr auto;
+  }
+
+  .simulation-commandbar #sim-strategy-lab {
+    grid-column: 1 / -1;
+    grid-row: auto;
+    width: 100%;
+  }
+
+  .simulation-commandbar .paper-panel small,
+  .simulation-commandbar #sim-error {
+    grid-column: 1 / -1;
+  }
+
+  .page-heading {
+    margin-bottom: 18px;
+  }
+
+  .orb-arena {
+    height: 250px;
+  }
+
+  body[data-rule-ai="true"] .model-card {
+    min-height: 0;
+  }
+
+  .ai-config-list {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(144px, 44%);
+    grid-template-columns: none;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scroll-snap-type: inline mandatory;
+    scrollbar-width: thin;
+  }
+
+  .ai-config {
+    scroll-snap-align: start;
+  }
+
+  .ai-choice strong {
+    max-width: 100%;
+    white-space: normal;
+    line-height: 1.18;
+  }
+
+  .report-card {
+    padding: 0;
+    border-radius: 20px;
+  }
+
+  .board-champion {
+    align-items: stretch;
+    padding: 17px;
+    flex-direction: column;
+  }
+
+  .board-champion-rank {
+    width: 36px;
+    height: 36px;
+    flex-basis: 36px;
+  }
+
+  .board-champion-avatar {
+    width: 50px;
+    height: 50px;
+    border-radius: 15px;
+  }
+
+  .board-champion-stats {
+    gap: 0;
+    border-top: 1px solid #e7e7ce;
+  }
+
+  .board-champion-stat {
+    min-width: 0;
+    padding: 12px 4px 0;
+    border-left: 0;
+  }
+
+  .board-champion-stat:last-child { text-align: right; }
+
+  .board-list-top {
+    min-height: 60px;
+    padding: 0 16px;
+  }
+
+  .board-list-labels { display: none; }
+
+  .board-rank-row {
+    grid-template-columns: 34px minmax(0, 1fr) auto;
+    grid-template-rows: repeat(2, auto);
+    gap: 3px 9px;
+    min-height: 72px;
+    padding: 10px 14px;
+  }
+
+  .board-rank-number {
+    grid-column: 1;
+    grid-row: 1 / 3;
+  }
+
+  .board-rank-identity {
+    grid-column: 2;
+    grid-row: 1 / 3;
+  }
+
+  .board-rank-row .mini-ai-avatar {
+    width: 34px;
+    height: 34px;
+  }
+
+  .board-rank-value:nth-child(3) {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .board-rank-value:nth-child(4) {
+    grid-column: 3;
+    grid-row: 2;
+  }
+
+  .board-rank-value:nth-child(4) strong,
+  .board-rank-value:nth-child(4) small {
+    display: inline;
+    margin-left: 4px;
+    font-size: 10px;
+  }
+
+  .report-summary {
+    align-items: stretch;
+    gap: 18px;
+    padding: 20px;
+    flex-direction: column;
+  }
+
+  .report-summary-copy h2 { font-size: 21px; }
+
+  .report-summary-profit {
+    min-width: 0;
+    padding-top: 14px;
+    border-top: 1px solid #ebe3ef;
+    text-align: left;
+  }
+
+  .report-summary-profit strong { font-size: 30px; }
+
+  .report-metric { padding: 14px 12px; }
+
+  .report-metric strong { font-size: 14px; }
+
+  .report-agents,
+  .report-orders { padding: 19px 16px; }
+
+  .report-agent-list { grid-template-columns: 1fr; }
+
+  .report-agent { padding: 13px; }
+
+  .report-order-list { border-radius: 12px; }
+
+  .report-order {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 7px 10px;
+    padding: 12px;
+  }
+
+  .report-order-agent {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .report-order-money {
+    grid-column: 2;
+    grid-row: 1;
+    text-align: right;
+  }
+
+  .report-order-market {
+    display: flex;
+    grid-column: 1;
+    grid-row: 2;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .report-order-status {
+    grid-column: 2;
+    grid-row: 2;
+    justify-self: end;
+    text-align: center;
+  }
+}
+
+@media (max-width: 390px) {
+  .simulation-commandbar .sim-battles form {
+    grid-template-columns: 1fr;
+  }
+
+  .simulation-commandbar .sim-battles form button {
+    width: 100%;
+  }
+
+  .ai-config-list {
+    grid-auto-columns: minmax(138px, 48%);
+  }
+
+  .board-rank-copy strong { max-width: 105px; }
+
+  .report-metric span { font-size: 9px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .simulation-commandbar,
+  .report-order {
+    box-shadow: none;
+  }
+}
+.arena-results {
+  min-width: 0;
+}
+
+.arena-results .models-section {
+  margin-top: 16px;
+  margin-bottom: 24px;
+}
+
+.arena-results .model-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.arena-results .section-heading {
+  justify-content: flex-end;
+}
+
+@media (min-width: 761px) and (max-width: 1000px) {
+  .arena-results .model-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

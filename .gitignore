@@ -16,6 +16,11 @@ wallet-data/
 coverage/
 test-results/
 playwright-report/
+.android-sdk/
+android/local.properties
+android/.gradle/
+android/keystore.properties
+*.jks
 .DS_Store
 Thumbs.db
 *.code-workspace

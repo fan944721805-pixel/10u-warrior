@@ -24,6 +24,30 @@
   let activeProvider = 'openai';
   let connections = new Map();
   let openButton = null;
+  let serverState = null;
+  let migrating = false;
+  const t = value => window.Warrior?.i18n?.t(value) || value;
+  async function serverRequest(url, body) {
+    if (window.Warrior.simulationApi?.mode === 'offline') throw new Error(t('AI 调用需要本机服务，离线模式仅使用本地规则。'));
+    const response = await fetch(url, { method: body ? 'POST' : 'GET', headers: body ? {'content-type':'application/json'} : {},
+      ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(20000) });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(t(payload.code || 'AI_SERVICE_UNAVAILABLE'));
+    serverState = payload;
+    window.dispatchEvent(new CustomEvent('warrior-ai-connections', { detail: payload }));
+    return payload;
+  }
+  window.Warrior.aiConnections = {
+    refresh: () => serverRequest('/api/ai/settings'),
+    snapshot: () => serverState,
+    assign: (strategy, connectionId) => serverRequest('/api/ai/assignments', {strategy, connectionId}),
+    async preview(strategy) {
+      const response = await fetch('/api/ai/preview', {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({strategy}),signal:AbortSignal.timeout(20000)});
+      const result = await response.json();
+      if(!response.ok)throw new Error(t(result.code || 'AI_SERVICE_UNAVAILABLE'));
+      return result;
+    },
+  };
 
   const request = req => new Promise((resolve, reject) => {
     req.onsuccess = () => resolve(req.result);
@@ -109,7 +133,7 @@
     });
     document.querySelector('#api-provider-eyebrow').textContent = provider.name.toUpperCase();
     document.querySelector('#api-provider-title').textContent = `连接 ${provider.name}`;
-    stateLabel.textContent = saved ? '已保存在本机' : '未配置';
+    stateLabel.textContent = saved?.lastStatus === 'success' ? '决策测试通过' : saved ? '已保存在本机' : '未配置';
     stateLabel.classList.toggle('is-saved', Boolean(saved));
     baseInput.value = saved?.baseUrl || provider.baseUrl;
     modelInput.value = saved?.model || provider.model;
@@ -125,6 +149,7 @@
     const records = [...connections.values()].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
     savedList.replaceChildren();
     savedCount.textContent = `${records.length} 个已配置`;
+    savedList.closest('.api-saved-section').hidden = records.length === 0;
     opener.classList.toggle('has-config', records.length > 0);
     if (!records.length) {
       const empty = document.createElement('p');
@@ -142,7 +167,11 @@
       const name = document.createElement('strong');
       name.textContent = providerLabel(record.provider);
       const meta = document.createElement('small');
-      meta.textContent = `${record.model} · ${record.lastStatus === 'success' ? '测试通过' : '已加密保存'}`;
+      const model = document.createElement('span');
+      model.dataset.noTranslate = ''; model.textContent = `${record.model} · `;
+      const status = document.createElement('span');
+      status.textContent = record.lastStatus === 'success' ? '决策测试通过' : '待测试';
+      meta.append(model, status);
       copy.append(name, meta);
       const remove = document.createElement('button');
       remove.type = 'button';
@@ -156,9 +185,25 @@
   }
   async function refreshConnections() {
     const records = await getAllConnections();
-    connections = new Map(records.map(record => [record.provider, record]));
+    const remote = await serverRequest('/api/ai/settings');
+    connections = new Map(records.map(record => [record.provider, {...record, lastStatus: null}]));
+    for (const record of remote.connections) connections.set(record.provider, {...connections.get(record.provider), ...record, lastStatus:record.tested?'success':null});
     renderSaved();
     renderProvider();
+    // Migrate only previously successful browser connections, without exposing their keys.
+    if (!migrating) {
+      migrating = true;
+      for (const record of records.filter(record => record.lastStatus === 'success' && !remote.connections.some(c => c.id === record.provider))) {
+        try {
+          await directTest(record, await decryptSecret(record));
+          const saved = serverState.connections.find(c => c.id === record.provider);
+          connections.set(record.provider, {...record,...saved,lastStatus:'success'});
+          renderSaved();
+          if (activeProvider === record.provider) renderProvider();
+        } catch (error) { setResult('error', '旧连接迁移失败，请重新测试', error.message); }
+      }
+      migrating = false;
+    }
   }
   function normalizedBaseUrl(value) {
     const parsed = new URL(value.trim());
@@ -175,14 +220,17 @@
     if (typeof window.toast === 'function') window.toast(message);
   }
   async function saveCurrent({ silent = false } = {}) {
+    const providerId = activeProvider;
     const values = currentValues();
     const existing = connections.get(activeProvider);
     const rawKey = keyInput.value.trim();
     if (!rawKey && !existing) throw new Error('请输入 API Key');
     const secret = rawKey ? await encryptSecret(rawKey) : existing.secret;
-    const record = { ...existing, provider: activeProvider, ...values, secret, updatedAt: Date.now() };
+    const record = { ...existing, provider: providerId, ...values, secret, updatedAt: Date.now(), lastStatus: null };
+    await serverRequest('/api/ai/connections', {provider:providerId,...values,apiKey:rawKey || ''});
+    record.lastStatus = serverState.connections.find(c => c.id === providerId)?.tested ? 'success' : null;
     await saveConnection(record);
-    connections.set(activeProvider, record);
+    connections.set(providerId, record);
     keyInput.value = '';
     keyInput.placeholder = '已保存在本机 · 输入新 Key 可替换';
     renderSaved();
@@ -196,36 +244,16 @@
     return (rawKey ? String(message).replaceAll(rawKey, '••••') : String(message)).slice(0, 180);
   }
   async function directTest(record, secret) {
-    const provider = providers[record.provider];
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 15000);
-    let url;
-    let options;
-    if (provider.type === 'openai') {
-      url = `${record.baseUrl}/models/${encodeURIComponent(record.model)}`;
-      options = { headers: { Authorization: `Bearer ${secret}` }, signal: controller.signal };
-    } else if (provider.type === 'anthropic') {
-      url = `${record.baseUrl}/messages`;
-      options = { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': secret, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify({ model: record.model, max_tokens: 4, messages: [{ role: 'user', content: 'Reply only: OK' }] }), signal: controller.signal };
-    } else {
-      url = `${record.baseUrl}/chat/completions`;
-      options = { method: 'POST', headers: { 'content-type': 'application/json', Authorization: `Bearer ${secret}` }, body: JSON.stringify({ model: record.model, max_tokens: 4, temperature: 0, messages: [{ role: 'user', content: 'Reply only: OK' }] }), signal: controller.signal };
-    }
-    try {
-      const response = await fetch(url, options);
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(apiErrorMessage(response.status, payload));
-      return payload;
-    } finally {
-      clearTimeout(timer);
-    }
+    return serverRequest('/api/ai/connections/test', { provider:record.provider, baseUrl:record.baseUrl, model:record.model, apiKey:secret || '' });
   }
   async function testCurrent(event) {
     event.preventDefault();
+    const providerId = activeProvider;
     const started = performance.now();
+    document.querySelectorAll('[data-api-provider]').forEach(button => button.disabled = true);
     saveButton.disabled = true;
     testButton.disabled = true;
-    setResult('testing', '正在测试连接…', '浏览器正直接联系所选 API');
+    setResult('testing', '正在测试决策…', '本机服务正验证模型的决策 JSON');
     try {
       const existing = connections.get(activeProvider);
       let record;
@@ -235,30 +263,37 @@
       } else {
         if (!existing) throw new Error('请输入 API Key');
         record = { ...existing, ...currentValues() };
+        if (record.baseUrl !== existing.baseUrl) throw new Error(t('AI_KEY_REQUIRED'));
       }
-      const secret = keyInput.value.trim() || await decryptSecret(existing);
+      const onServer = serverState?.connections?.some(c => c.id === providerId);
+      const secret = keyInput.value.trim() || (!onServer && existing?.secret ? await decryptSecret(existing) : '');
       await directTest(record, secret);
       const latency = Math.max(1, Math.round(performance.now() - started));
+      keyInput.required = false;
       record.lastStatus = 'success';
       record.lastLatency = latency;
       record.updatedAt = Date.now();
       await saveConnection(record);
-      connections.set(activeProvider, record);
+      connections.set(providerId, record);
       keyInput.value = '';
       keyInput.placeholder = '已保存在本机 · 输入新 Key 可替换';
       renderSaved();
       document.querySelectorAll('[data-api-provider]').forEach(button => button.classList.toggle('is-saved', connections.has(button.dataset.apiProvider)));
       stateLabel.textContent = '连接可用';
       stateLabel.classList.add('is-saved');
-      setResult('success', '连接成功', `${providerLabel(activeProvider)} · ${latency} ms`);
+      setResult('success', '决策测试通过', `${providerLabel(activeProvider)} · ${latency} ms`);
       notify(`${providerLabel(activeProvider)} 连接成功`);
     } catch (error) {
       const isNetwork = error instanceof TypeError || error?.name === 'AbortError';
-      const detail = error?.name === 'AbortError' ? '请求超时，请检查网络或接口地址' : isNetwork ? '浏览器直连被网络或 CORS 策略阻止；Key 未经过本机服务' : (error.message || '测试失败');
+      const detail = error?.name === 'AbortError' ? '请求超时，请检查网络或接口地址' : isNetwork ? t('AI_SERVICE_UNAVAILABLE') : (error.message || '测试失败');
+      const existing = connections.get(providerId);
+      if(existing)existing.lastStatus = null;
+      renderSaved();
       setResult('error', '连接失败', detail);
     } finally {
       saveButton.disabled = false;
       testButton.disabled = false;
+      document.querySelectorAll('[data-api-provider]').forEach(button => button.disabled = false);
     }
   }
 
@@ -266,12 +301,16 @@
     activeProvider = button.dataset.apiProvider;
     renderProvider();
   }));
-  opener.addEventListener('click', async () => {
-    openButton = document.activeElement;
-    try { await refreshConnections(); } catch (error) { setResult('error', '本机存储不可用', error.message); }
-    dialog.showModal();
-    document.querySelector('[data-api-provider].selected')?.focus();
-  });
+  window.Warrior.openAiSettings = (section = 'connections') => {
+    if (!dialog.open) {
+      openButton = document.activeElement;
+      dialog.showModal();
+      refreshConnections().catch(error => setResult('error', '本机存储不可用', error.message));
+    }
+    window.Warrior.aiSettings?.select(section);
+    document.querySelector(`#ai-settings-${section}-tab`)?.focus();
+  };
+  opener.addEventListener('click', () => window.Warrior.openAiSettings());
   document.querySelector('.api-dialog-close').addEventListener('click', () => dialog.close());
   dialog.addEventListener('close', () => openButton?.focus());
   document.querySelector('#api-key-toggle').addEventListener('click', event => {
@@ -282,8 +321,13 @@
   });
   saveButton.addEventListener('click', async () => {
     saveButton.disabled = true;
+    testButton.disabled = true;
+    document.querySelectorAll('[data-api-provider]').forEach(button => button.disabled = true);
     try { await saveCurrent(); } catch (error) { setResult('error', '保存失败', error.message); }
-    finally { saveButton.disabled = false; }
+    finally {
+      saveButton.disabled = false; testButton.disabled = false;
+      document.querySelectorAll('[data-api-provider]').forEach(button => button.disabled = false);
+    }
   });
   form.addEventListener('submit', testCurrent);
   savedList.addEventListener('click', async event => {
@@ -292,6 +336,7 @@
     const provider = button.dataset.removeApi;
     button.disabled = true;
     try {
+      await serverRequest('/api/ai/connections/remove', {provider});
       await deleteConnection(provider);
       connections.delete(provider);
       renderSaved();
@@ -302,5 +347,5 @@
       setResult('error', '移除失败', error.message);
     }
   });
-  refreshConnections().catch(() => {});
+  refreshConnections().catch(error => setResult('error', '本机服务不可用', error.message));
 })();

@@ -1,0 +1,116 @@
+.paper-panel{display:flex;gap:8px 16px;flex-wrap:wrap;align-items:center;margin:0 0 18px;color:#62477b;font-size:13px}.paper-panel strong{font-size:18px;color:#402655}.paper-panel small{color:#887494;font-size:10px}#sim-strategy-lab{min-height:48px;margin-left:auto;padding:0 15px;border:1px solid #56376a;border-radius:14px;background:#e3f879;color:#49325b;box-shadow:0 3px 0 #56376a;font-size:12px;font-weight:850}#sim-error{flex-basis:100%;color:#b44661}#sim-error:empty{display:none}.sim-equity{font-size:30px;font-weight:800;margin:16px 0 8px}.sim-cash,.sim-bet,.sim-status,.sim-win{font-size:14px;line-height:1.9}.sim-status{color:#7548a8}body[data-rule-ai=true] .new-experiment,body[data-rule-ai=true] [data-page=leaderboard],body[data-rule-ai=true] #test-panel-toggle,body[data-rule-ai=true] #test-panel,body[data-rule-ai=true] .arena-rule,body[data-rule-ai=true] .arena-drag-guide,body[data-rule-ai=true] .skin-note,body[data-rule-ai=true] .orb-drop-label,body[data-rule-ai=true] .arena-trash,body[data-rule-ai=true] #reports>.footnote{display:none!important}body[data-rule-ai=true] .orb{pointer-events:none}body[data-rule-ai=true] .orb-balance{font-size:12px}body[data-rule-ai=true] .model-card{min-height:240px;cursor:default}#pause{min-height:48px}.report-card p{font-size:13px;line-height:1.8;overflow-wrap:anywhere}@media(max-width:760px){#sim-strategy-lab{width:100%;margin-left:0}.paper-panel small{flex-basis:100%}}
+.sim-battles{display:flex;flex-wrap:wrap;gap:12px;align-items:end;margin-bottom:16px}.sim-battles label{display:grid;gap:6px;min-width:0}.sim-battles form{display:flex;flex-wrap:wrap;gap:8px;align-items:end}.sim-battles input,.sim-battles select,.sim-battles button{min-height:48px;max-width:100%;border:1px solid #bfa6d8;border-radius:12px;padding:8px 12px;background:#fff;color:#402655}.sim-battles button{background:#dcfa63;font-weight:700}.sim-battles small{flex-basis:100%}.sim-ranking{width:100%;border-collapse:collapse;background:#fff;border-radius:16px}.sim-ranking th,.sim-ranking td{text-align:left;padding:16px 8px;overflow-wrap:anywhere;border-bottom:1px solid #eee}.sim-ranking td:first-child{max-width:160px}body[data-rule-ai=true] #leaderboard .board-controls{display:none}@media(max-width:480px){.sim-battles>label,.sim-battles form{width:100%}.sim-battles form label{flex:1}.sim-battles input{width:100%}.sim-ranking{font-size:12px}}
+.sim-reason{min-height:34px;margin-top:5px;color:#867290;font-size:11px;line-height:1.55;overflow-wrap:anywhere}
+body[data-rule-ai=true] #create-dialog[data-mode=strategy] .budget-control,
+body[data-rule-ai=true] #create-dialog[data-mode=strategy] .budget-presets,
+body[data-rule-ai=true] #create-dialog[data-mode=strategy] #rounds,
+body[data-rule-ai=true] #create-dialog[data-mode=strategy] #markets,
+body[data-rule-ai=true] #create-dialog[data-mode=strategy] .form-summary,
+body[data-rule-ai=true] #create-dialog[data-mode=strategy] .field-label:not(.ai-field-label){display:none}
+body[data-rule-ai=true] #end {min-height:48px;width:auto;padding:0 12px}
+body[data-rule-ai=true] .battle-controls{flex-wrap:wrap}
+body[data-rule-ai=true] .model-card{cursor:pointer}
+body[data-rule-ai=true] #round-text{font-size:18px;white-space:nowrap}
+.creation-review p{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;overflow-wrap:anywhere}
+.creation-review strong{max-width:100%;text-align:right}
+#create-confirm-dialog button{min-height:48px;margin-top:12px}
+.audit-details{grid-column:1/-1;width:100%;min-width:0}
+.audit-details summary{cursor:pointer;min-height:48px;display:flex;align-items:center}
+.audit-details pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;max-height:380px;overflow:auto}
+.audit-section{padding:20px;border-top:1px solid #eadff0;overflow-wrap:anywhere}
+.execution-dialog pre{font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:320px;overflow:auto}
+.execution-dialog button,.report-order>button,.audit-section>button{min-height:48px;margin-top:12px}
+.execution-consent{display:flex;gap:10px;align-items:flex-start;margin:16px 0;font-size:14px}
+.execution-consent input{min-width:24px;min-height:24px}
+.execution-error{color:#a42b50}
+.execution-summary p,.settlement-summary p{display:flex;flex-wrap:wrap;justify-content:space-between;gap:10px;margin:10px 0;overflow-wrap:anywhere}
+.execution-summary strong{max-width:100%}
+.settlement-summary{grid-column:1/-1;font-size:13px}
+.audit-section>div>span{margin-left:12px}
+.audit-details summary{gap:8px}
+.simulation-commandbar .live-price-panel{grid-column:1/-1;padding:12px;border-radius:12px;background:#f0e8ff;border:1px solid #d9c6eb;min-width:0}
+.live-price-title,.live-price-meta{display:flex;gap:8px;flex-wrap:wrap;font-size:12px}
+.live-price-title{font-weight:700}
+.live-price-value{display:block;font-size:25px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere;margin:5px 0}
+.live-price-meta,.live-price-note{color:#796187;font-size:11px;line-height:1.6}
+.live-price-panel[data-state=live] .live-price-title::before{content:'●';color:#648326}
+.sim-potential,.bet-return-panel{grid-column:1/-1;min-width:0;text-align:left}
+.bet-return-panel{padding:10px;border-radius:10px;background:#f4f1dd;margin:5px 0;font-size:12px}
+.bet-return-row{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;line-height:1.8}
+.bet-return-row strong{font-variant-numeric:tabular-nums}
+.bet-return-panel small{display:block;font-size:10px;color:#796187;line-height:1.6}
+.bet-return-heading{display:flex;flex-wrap:wrap;gap:6px;font-size:11px;color:#796187}
+.valuation-book{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 8px;color:#927ca2;font-size:11px;line-height:1.6;margin-top:8px;font-variant-numeric:tabular-nums}
+.valuation-book strong{font-size:12px;font-weight:650;color:#614974}
+.valuation-book small{flex-basis:100%;font-size:10px}
+.valuation-book .is-positive,#gain[data-tone=is-positive]{color:#21826e}
+.valuation-book .is-negative,#gain[data-tone=is-negative]{color:#b64e70}
+#gain[data-tone=flat],#gain[data-tone=is-flat]{color:#927ca2}
+.agent-summary .valuation-book{margin-top:-4px;margin-bottom:10px}
+#ai-arena .agent-summary .agent-footer{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;padding-top:2px;min-height:51px;font-size:12px;line-height:20px}
+#ai-arena .agent-summary .agent-win{display:flex;align-items:baseline;gap:4px;flex-wrap:wrap;line-height:20px;min-width:0}
+#ai-arena .agent-summary .agent-win small{font-size:10px;line-height:20px}
+.agent-summary .agent-card-actions{display:flex;align-items:center;justify-self:end;margin:0 -10px 0 0;gap:4px;user-select:none}
+body[data-betting-mode=live] .agent-summary .agent-card-actions{margin-right:0}
+#ai-arena .agent-summary .agent-card-actions button{display:inline-flex;align-items:center;justify-content:center;height:48px;min-height:48px;margin:0;padding:0;border:0;border-radius:8px;box-shadow:none;background:transparent;font:inherit;line-height:20px;color:#8a7599;cursor:pointer;transition:color .15s}
+#ai-arena .agent-summary .agent-detail-link{padding:0 6px;white-space:nowrap}
+.agent-summary .agent-detail-link>span{display:block;line-height:20px}
+.agent-summary .agent-top-up{flex:0 0 48px;width:48px}
+.agent-top-up-mark{display:grid;place-items:center;width:28px;height:28px;border:1px solid #e5dced;border-radius:8px;background:transparent}
+.agent-top-up-mark svg{display:block;width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round}
+#ai-arena .agent-summary .agent-card-actions button:hover{color:#573a70;background:transparent;box-shadow:none;transform:none}
+#ai-arena .agent-summary .agent-card-actions button:active{transform:none;color:#392647}
+#ai-arena .agent-summary .agent-card-actions button:focus-visible{outline:2px solid #a18bd6;outline-offset:0}
+#ai-arena .agent-summary:hover{transform:none;box-shadow:0 4px 0 #e0d1e9}
+.agent-summary .agent-top-up:disabled{opacity:.45;cursor:default}
+.agent-added-capital{display:flex;justify-content:space-between;gap:8px;color:#927ca2;font-size:11px;margin:0 0 8px}
+.agent-added-capital[hidden]{display:none}
+body[data-betting-mode=live] .agent-top-up{display:none!important}
+.top-up-dialog{width:min(400px,calc(100vw - 32px));box-sizing:border-box;padding:24px;border:1px solid #cfb8e5;border-radius:24px;background:#fcf8ff;color:#433052;max-height:calc(100dvh - 32px);overflow:auto}
+.top-up-dialog header,.top-up-agent{display:flex;align-items:center;gap:10px}
+.top-up-dialog header{justify-content:space-between;margin-bottom:18px}
+.top-up-dialog h2{font-size:22px;margin:0}
+.top-up-dialog button{min-height:48px;cursor:pointer;border-radius:12px;border:1px solid #d9c5eb;color:#674880;background:#fff}
+.top-up-close{min-width:48px;font-size:22px}
+.top-up-agent{flex-wrap:wrap;margin-bottom:18px;font-size:13px}
+.top-up-agent>span:not(.mini-ai-avatar){margin-left:auto;color:#927ca2}
+.top-up-dialog label{display:block;font-size:12px;font-weight:700;margin-bottom:8px}
+.top-up-dialog input{box-sizing:border-box;width:100%;height:56px;padding:12px;font-family:inherit;font-size:24px;font-weight:700;color:#433052;border:1px solid #c5a6e1;border-radius:12px;background:white}
+.top-up-presets{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:10px}
+.top-up-dialog p,.top-up-error{font-size:12px;line-height:1.6;color:#927ca2}
+.top-up-error{color:#ad4565;margin-bottom:10px}
+.top-up-dialog .top-up-confirm{width:100%;background:#e6fb75;border-color:#9daa50;font-weight:700}
+.top-up-dialog button:disabled{opacity:.5}
+@media(max-width:760px){#top-up-dialog{margin-inline:auto;margin-bottom:16px;max-height:calc(100dvh - 32px)}}
+/* Roster-aware desktop grid; smaller screens keep readable cards. */
+@media(min-width:1001px){
+  #ai-arena .model-grid[data-columns="3"]{grid-template-columns:repeat(3,minmax(0,1fr))}
+  #ai-arena .model-grid[data-columns="4"]{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+@media(min-width:1400px){
+  #ai-arena .model-grid[data-columns="4"]{grid-template-columns:repeat(4,minmax(0,1fr))}
+  body[data-rule-ai=true] #ai-arena .model-grid[data-columns="4"] .agent-summary{padding:18px;min-width:0}
+  #ai-arena .model-grid[data-columns="4"] .model-top{gap:8px}
+  #ai-arena .model-grid[data-columns="4"] .model-top strong{font-size:16px}
+  #ai-arena .model-grid[data-columns="4"] .model-ai-avatar{width:42px;height:42px;min-width:42px;flex-basis:42px}
+  #ai-arena .model-grid[data-columns="4"] .rank{font-size:12px;padding:5px 7px}
+  #ai-arena .model-grid[data-columns="4"] .agent-balance strong{font-size:26px}
+  #ai-arena .model-grid[data-columns="4"] .agent-equity-head{gap:6px}
+  #ai-arena .model-grid[data-columns="4"] .agent-stats{padding:12px 8px;gap:8px}
+  #ai-arena .model-grid[data-columns="4"] .agent-footer{font-size:11px;gap:4px}
+}
+@media(min-width:761px) and (max-width:1000px){#ai-arena .model-grid[data-columns]{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.collision-meter{display:inline-flex;align-items:center;gap:6px;padding:6px 9px;border:1px solid #d7c5e5;border-radius:999px;background:#fff;color:#806d8a;font-size:11px;white-space:nowrap}.collision-meter b{font-weight:800}.collision-meter output{min-width:34px;color:#49325b;font-weight:900;font-variant-numeric:tabular-nums}
+.collision-meter[data-level="low"]{background:#edf7ca;border-color:#b7c96a}.collision-meter[data-level="mid"]{background:#fff2bf;border-color:#dbc469}.collision-meter[data-level="high"]{background:#ffe1e8;border-color:#df9daf;color:#9b3f58}
+/* Recovery stays visible with the balance, including narrow screens. */
+.connection-recovery{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:16px 0;padding:16px;border:2px solid #7b3fcb;border-radius:16px;background:#f3eaff;color:#34204e;min-width:0}
+.connection-recovery[hidden]{display:none}
+.connection-recovery>div{min-width:0}
+.connection-recovery p{margin:6px 0 0;font-size:13px;line-height:1.5;overflow-wrap:anywhere}
+.connection-recovery .recovery-title{font-size:16px}
+.recovery-actions{display:flex;gap:8px;flex-wrap:wrap;flex-shrink:0}
+.recovery-actions button{min-height:48px;padding:10px 16px;border:2px solid #432063;border-radius:12px;background:#eaff52;color:#291238;font:inherit;font-weight:700;cursor:pointer}
+.recovery-actions button:disabled{opacity:.55;cursor:wait}
+.recovery-actions button[hidden]{display:none}
+.connection-recovery[data-state="exhausted"]{border-color:#76529b}
+@media(max-width:600px){.connection-recovery{align-items:stretch;flex-direction:column}.recovery-actions button{flex:1}.recovery-actions{width:100%}}

@@ -1,0 +1,117 @@
+/* Game setup: one spacing scale, readable type, and 48px touch targets. */
+body #create-dialog {
+  width: min(560px, calc(100% - 32px));
+  max-width: 560px;
+  padding: 24px;
+  border: 1px solid #d8c8e5;
+  border-radius: 24px;
+  background: #fbf8ff;
+  color: #493457;
+  font-size: 14px;
+  line-height: 1.5;
+  box-shadow: 0 12px 0 #51356612, 0 24px 80px #35214426;
+}
+body #create-dialog #create-form > .dialog-top {
+  position: static;
+  margin: 0 0 20px;
+  padding: 0;
+  background: transparent;
+  gap: 16px;
+}
+body #create-dialog h2 { margin: 0; font-size: 24px; line-height: 1.3; font-weight: 800; letter-spacing: 0; }
+body #create-dialog .close-dialog,
+body #create-dialog .add-coin-button {
+  display: grid; place-items: center;
+  width: 48px; min-width: 48px; height: 48px; min-height: 48px;
+  padding: 0; border: 1px solid #dfd2e9; border-radius: 12px;
+  background: #fff; color: #745888; box-shadow: none; font-size: 24px;
+}
+body #create-dialog .add-coin-button { background: #ebf8b5; border-color: #c6d582; color: #4b5b27; }
+body #create-dialog .field-label { margin: 20px 0 8px; font-size: 14px; line-height: 1.5; font-weight: 700; color: #493457; }
+body #create-dialog .ai-field-label { margin-top: 0; }
+body #create-dialog .ai-field-copy { margin: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+body #create-dialog .ai-field-copy b { font-size: 14px; }
+body #create-dialog .field-label > span:not(.ai-field-copy),
+body #create-dialog .ai-field-copy small { font-size: 12px; font-weight: 400; color: #8a7898; }
+body #create-dialog .ai-config-list {
+  grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: minmax(134px, max-content); gap: 12px;
+  max-height: none; overflow: visible;
+  align-content: start; padding: 4px; scroll-padding: 4px;
+  scrollbar-width: thin; scrollbar-color: #bda4d2 #f2eaf8;
+}
+body #create-dialog .add-strategy-button { display:grid; place-items:center; align-self:stretch; width:100%; height:auto; min-height:74px; margin:0; border:2px dashed #b99bce; border-radius:16px; background:#f3ecf9; color:#79528f; font-size:40px; font-weight:400; box-shadow:none; }
+body #create-dialog .add-strategy-button:hover { background:#eaf5b9; border-color:#a2b363; color:#53662d; }
+body #create-dialog .add-strategy-button:focus-visible { outline:3px solid #9875b4; outline-offset:2px; }
+body #create-dialog .ai-config.strategy-folded { display:none !important; }
+body #create-dialog .strategy-list-toggle[hidden] { display:none !important; }
+body #create-dialog .strategy-list-toggle:not([hidden]) {
+  display:flex; align-items:center; justify-content:center; gap:8px;
+  width:fit-content; max-width:100%; min-height:48px; margin:0 auto; padding:10px 16px;
+  border:0; border-radius:10px; background:transparent;
+  color:#745888; font-size:13px; font-weight:600; box-shadow:none; cursor:pointer;
+}
+body #create-dialog .strategy-list-toggle::after {
+  content:''; width:6px; height:6px; flex:0 0 6px;
+  border-right:1.5px solid currentColor; border-bottom:1.5px solid currentColor;
+  transform:translateY(-2px) rotate(45deg);
+}
+body #create-dialog .strategy-list-toggle[aria-expanded=true]::after { transform:translateY(2px) rotate(225deg); }
+@media (hover:hover) {
+  body #create-dialog .strategy-list-toggle:hover { background:#f0e8f7; color:#513568; }
+}
+body #create-dialog .strategy-list-toggle:focus-visible { outline:2px solid #9875b4; outline-offset:2px; }
+body #create-dialog .ai-config {
+  aspect-ratio: auto; padding: 16px 10px; border-radius: 16px;
+  border: 1px solid #e1d5eb; background: #fff; box-shadow: none;
+}
+body #create-dialog .ai-config:has(input:checked) { border-color: #aa8bc3; background: #f5effc; box-shadow: inset 0 0 0 1px #aa8bc326; }
+body #create-dialog .ai-choice { min-height: 100px; padding: 0; gap: 6px; flex-direction: column; }
+body #create-dialog .ai-choice { justify-content:center; }
+body #create-dialog .ai-avatar { width: 48px; height: 48px; flex-basis: 48px; }
+body #create-dialog .strategy-avatar {
+  background-color: #f3ebfb !important;
+  background-repeat: no-repeat !important;
+  box-shadow: inset 0 0 0 1px #cdb9dd, 0 3px 8px #4f326326 !important;
+}
+body #create-dialog .ai-choice strong {
+  font-size: 15px; line-height: 1.5; font-weight: 700;
+  white-space: normal; overflow-wrap: anywhere; overflow: visible; text-overflow: clip;
+}
+body #create-dialog .agent-strategy {
+  position: static; min-width: 0; padding: 0; border: 0; border-radius: 0;
+  background: transparent; color: #887097; font-size: 12px; font-weight: 500; line-height: 1.5;
+}
+body #create-dialog .market-field-label { margin-top: 8px; }
+body #create-dialog .segmented { padding: 4px; gap: 4px; border-radius: 14px; background: #eee7f6; }
+body #create-dialog .segmented button,
+body #create-dialog .budget-presets button {
+  min-height: 48px; padding: 8px 12px; border-radius: 10px;
+  font-size: 14px; font-weight: 600; line-height: 1.4; box-shadow: none;
+}
+body #create-dialog .segmented button.selected,
+body #create-dialog .budget-presets button.selected { background: #e4f49b; color: #4c5c28; box-shadow: none; }
+body #create-dialog .budget-control { gap: 8px; padding: 6px; border-radius: 14px; background: #eee7f6; }
+body #create-dialog .budget-control button { width: 48px; min-width: 48px; height: 48px; min-height: 48px; border-radius: 10px; font-size: 24px; box-shadow: none; }
+body #create-dialog .budget-control label { min-width: 0; justify-content: center; gap: 8px; }
+body #create-dialog .budget-control input { width: 90px; max-width: 100%; font-size: 26px; font-weight: 700; color: #493457; font-variant-numeric: tabular-nums; }
+body #create-dialog .budget-control label span { font-size: 12px; }
+body #create-dialog .budget-presets { gap: 10px; margin-top: 10px; }
+body #create-dialog .form-summary { margin: 20px 0; padding: 16px 0; border-top: 1px solid #e6ddeb; border-bottom: 1px solid #e6ddeb; gap: 10px; font-size: 13px; }
+body #create-dialog .form-summary strong { color: #594364; font-weight: 600; }
+body #create-dialog #create-form > button[type=submit] { min-height: 52px; border-radius: 14px; font-size: 16px; font-weight: 750; box-shadow: 0 3px 0 #513469; }
+body #create-dialog .dialog-note { margin-top: 12px !important; font-size: 12px; }
+body #create-dialog #form-error:empty { display: none; }
+
+@media (max-width: 760px) {
+  body #create-dialog { inset: auto 0 0; width: 100%; max-width: none; padding: 20px 16px calc(20px + env(safe-area-inset-bottom)); border-radius: 24px 24px 0 0; }
+  body #create-dialog #create-form > .dialog-top { position: sticky; top: -20px; z-index: 4; margin-bottom: 16px; padding: 8px 0; background: #fbf8fff5; border-radius: 0; }
+  body #create-dialog h2 { font-size: 22px; }
+  body #create-dialog .ai-config-list { grid-template-columns: 1fr; grid-auto-rows: minmax(74px, max-content); gap: 8px; max-height:none; }
+  body #create-dialog .ai-config { flex-direction: row; align-items: center; padding: 12px; gap: 12px; }
+  body #create-dialog .ai-config::after { left: 6px; right: auto; top: 6px; width: 6px; height: 6px; box-shadow: none; }
+  body #create-dialog .ai-choice { display: grid; min-height: 48px; grid-template-columns: 48px minmax(0, 1fr); grid-template-rows: auto auto; gap: 0 12px; padding: 0; text-align: left; }
+  body #create-dialog .ai-avatar { grid-column: 1; grid-row: 1 / 3; }
+  body #create-dialog .ai-choice strong { grid-column: 2; grid-row:1 / 3; align-self:center; }
+  body #create-dialog .agent-strategy { grid-column: 2; align-self: start; }
+  body #create-dialog .segmented button { padding-inline: 6px; }
+}

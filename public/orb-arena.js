@@ -1,18 +1,20 @@
 (() => {
   const arena=document.querySelector('#orb-arena');
   if(!arena)return;
+  // Rule AI mode is rendered from the server ledger by paper.js. Never run demo settlement.
+  if(document.body.dataset.ruleAi === 'true') return;
   const skinDefaults={
-    claude:{strategy:'aggressive',strategyLabel:'激进策略',coin:'BTC',direction:'看涨',particles:['#fff19b','#ff9d74']},
-    gpt:{strategy:'smart',strategyLabel:'智能策略',coin:'BTC',direction:'看涨',particles:['#9ff8ff','#a69cff']},
-    deepseek:{strategy:'conservative',strategyLabel:'保守策略',coin:'BTC',direction:'看空',particles:['#a9ecff','#f47db5']}
+    claude:{strategy:'aggressive',strategyLabel:'赌狗',coin:'BTC',direction:'看涨',particles:['#fff19b','#ff9d74']},
+    gpt:{strategy:'smart',strategyLabel:'超级AI',coin:'BTC',direction:'看涨',particles:['#9ff8ff','#a69cff']},
+    deepseek:{strategy:'conservative',strategyLabel:'守财奴',coin:'BTC',direction:'看空',particles:['#a9ecff','#f47db5']}
   };
-  const strategyLabels={aggressive:'激进策略',smart:'智能策略',conservative:'保守策略'};
+  const strategyLabels={aggressive:'赌狗',smart:'超级AI',conservative:'守财奴'};
   const safeProvider=value=>Object.hasOwn(skinDefaults,value)?value:'gpt';
   const safeStrategy=(value,provider)=>Object.hasOwn(strategyLabels,value)?value:skinDefaults[safeProvider(provider)].strategy;
   const meta={
-    claude:{name:'狐火术师',provider:'claude',...skinDefaults.claude},
-    gpt:{name:'星环机甲',provider:'gpt',...skinDefaults.gpt},
-    deepseek:{name:'深海灵兽',provider:'deepseek',...skinDefaults.deepseek}
+    claude:{name:window.Warrior.agentLabel(window.modelCatalog?.claude || skinDefaults.claude),provider:'claude',...skinDefaults.claude},
+    gpt:{name:window.Warrior.agentLabel(window.modelCatalog?.gpt || skinDefaults.gpt),provider:'gpt',...skinDefaults.gpt},
+    deepseek:{name:window.Warrior.agentLabel(window.modelCatalog?.deepseek || skinDefaults.deepseek),provider:'deepseek',...skinDefaults.deepseek}
   };
   const initial={round:12,maxRounds:20,roundMode:'fixed',market:'Binance Prediction',startTotal:30,ai:{
     claude:{balance:11.64,base:10,active:true,coin:'ETH',direction:'看涨',expression:'waiting'},
@@ -29,7 +31,7 @@
   if(!Object.keys(meta).length){
     Object.entries(window.modelCatalog||{}).slice(0,3).forEach(([id,item])=>{
       const provider=safeProvider(item.provider),skin=skinDefaults[provider],strategy=safeStrategy(item.strategy,provider);
-      meta[id]={name:item.name||id,provider,...skin,strategy,strategyLabel:strategyLabels[strategy]};
+      meta[id]={name:window.Warrior.agentLabel(item),provider,...skin,strategy,strategyLabel:strategyLabels[strategy]};
       initial.ai[id]={balance:10,base:10,active:true,coin:item.coin||skin.coin,direction:skin.direction,expression:'waiting'};
     });
   }
@@ -40,8 +42,14 @@
   const clamp=(min,value,max)=>Math.max(min,Math.min(max,value));
   const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
   const activeIds=()=>ids.filter(id=>state.ai[id].active);
+  const wealthStage=item=>{
+    const multiple=item?.base?item.balance/item.base:0;
+    return multiple>=10?'wealthy':multiple>=3?'massage':'delivery';
+  };
+  const wealthStageLabels={delivery:'归零送外卖',massage:'3×按脚',wealthy:'10×金链'};
   const signed=value=>`${value>=0?'+':'−'}${Math.abs(value).toFixed(2)}U`;
   const sizeFor=value=>arena.clientWidth<420?clamp(68,54+value*3.25,124):clamp(78,62+value*3.8,158);
+  const displaySize=value=>document.body.dataset.avatarMode==='male'?(arena.clientWidth<420?96:112):sizeFor(value);
   const trash=document.querySelector('#arena-trash');
   let dragState=null;
   const pointInside=(rect,x,y,padding=0)=>x>=rect.left-padding&&x<=rect.right+padding&&y>=rect.top-padding&&y<=rect.bottom+padding;
@@ -162,7 +170,7 @@
   function syncAgentMeta(id){
     const catalog=window.modelCatalog?.[id]||{},provider=safeProvider(catalog.provider||id),skin=skinDefaults[provider];
     const strategy=safeStrategy(catalog.strategy,provider);
-    meta[id]={name:catalog.name||meta[id]?.name||id,provider,strategy,strategyLabel:strategyLabels[strategy],coin:catalog.coin||skin.coin,direction:skin.direction,particles:skin.particles};
+    meta[id]={name:window.Warrior.agentLabel(catalog),provider,strategy,strategyLabel:strategyLabels[strategy],coin:catalog.coin||skin.coin,direction:skin.direction,particles:skin.particles};
     return meta[id];
   }
   function ensureAgentDom(id){
@@ -174,7 +182,7 @@
       arena.insertBefore(orb,arena.querySelector('#arena-message'));
     }
     if(!orb.querySelector('.orb-drop-label')){const label=document.createElement('span');label.className='orb-drop-label';label.textContent='松开投喂';orb.append(label)}
-    orb.dataset.skin=provider;orb.setAttribute('aria-label',`拖动 ${item.name}，可投喂给另一位 Agent 或丢进垃圾桶`);orb.setAttribute('aria-grabbed','false');orbs[id]=orb;if(!ids.includes(id))ids.push(id);bindAgentDrag(orb);
+    orb.dataset.skin=provider;orb.setAttribute('aria-label',`拖动 ${item.name}，可投喂给另一位 Agent 或丢进垃圾桶`);orb.setAttribute('aria-grabbed','false');window.Warrior?.skins?.applyElement(orb,{...window.modelCatalog?.[id],strategy:item.strategy,provider});orbs[id]=orb;if(!ids.includes(id))ids.push(id);bindAgentDrag(orb);
 
     let card=document.querySelector(`.model-card[data-model="${CSS.escape(id)}"]`);
     if(!card){
@@ -182,7 +190,7 @@
       card.innerHTML='<div class="model-top"><span class="model-ai-avatar" aria-hidden="true"></span><div><strong></strong><span class="model-strategy"></span></div><span class="rank"></span></div><div class="model-value">0.00 <span>USDT</span><small class="positive">0.00%</small></div><div class="model-bottom single-action"><span>决策 ↗</span></div>';
       document.querySelector('.model-grid').append(card);
     }
-    card.querySelector('.model-ai-avatar').className=`model-ai-avatar avatar-${provider}`;
+    card.querySelector('.model-ai-avatar').className=`model-ai-avatar avatar-${provider}`;window.Warrior?.skins?.applyElement(card.querySelector('.model-ai-avatar'),{...window.modelCatalog?.[id],strategy:item.strategy,provider});
     card.querySelector('.model-top strong').textContent=item.name;
     let strategy=card.querySelector('.model-strategy');if(!strategy){strategy=document.createElement('span');strategy.className='model-strategy';card.querySelector('.model-top strong').after(strategy)}strategy.textContent=item.strategyLabel;
     card.querySelector('.rank').textContent=String([...document.querySelectorAll('.model-card')].indexOf(card)+1).padStart(2,'0');
@@ -193,7 +201,8 @@
     else testButton.textContent=item.name;
   }
   function assignPositions(){
-    const active=activeIds(),xs={1:[50],2:[34,66],3:[18,50,82],4:[14,38,62,86],5:[10,30,50,70,90],6:[9,25,42,58,75,91]}[active.length]||[50],ys={1:[50],2:[45,57],3:[44,58,42],4:[39,61,39,61],5:[38,61,39,61,38],6:[38,61,38,61,38,61]}[active.length]||[50];
+    const active=activeIds(),xs={1:[50],2:[34,66],3:[18,50,82],4:[14,38,62,86],5:[10,30,50,70,90],6:[9,25,42,58,75,91],7:[12,37,62,87,22,50,78],8:[13,38,63,88,13,38,63,88]}[active.length]||[50],ys={1:[50],2:[45,57],3:[44,58,42],4:[39,61,39,61],5:[38,61,39,61,38],6:[38,61,38,61,38,61],7:[36,36,36,36,62,62,62],8:[36,36,36,36,62,62,62,62]}[active.length]||[50];
+    arena.dataset.participants=String(active.length);
     active.forEach((id,index)=>Object.assign(state.ai[id],{x:xs[index]??50,y:ys[index]??50}));
   }
   function syncCatalog(id){
@@ -221,6 +230,7 @@
     const wasEaten=!item.active&&item.eatenBy;
     card.hidden=!item.active&&!wasEaten;card.classList.toggle('orb-card-eliminated',Boolean(wasEaten));
     const rate=item.base?(item.balance-item.base)/item.base*100:0;
+    card.dataset.wealthStage=wealthStage(item);
     card.querySelector('.model-value').innerHTML=`${item.balance.toFixed(2)} <span>USDT</span><small class="${rate<0?'negative':'positive'}">${rate>=0?'＋':'−'}${Math.abs(rate).toFixed(2)}%</small>`;
     syncCatalog(id);
   }
@@ -235,32 +245,38 @@
   function renderAll(effect){
     ids.forEach(id=>{
       const item=state.ai[id],orb=orbs[id];if(!item||!orb)return;orb.hidden=!item.active;orb.classList.remove('is-eaten','is-threatened','is-hunting','is-devouring');
-      if(item.active){orb.dataset.stage=item.balance>=18?'awakened':item.balance<5?'seed':'normal';orb.dataset.expression=item.expression||'waiting';orb.style.setProperty('--orb-size',`${sizeFor(item.balance)}px`);orb.style.setProperty('--x',`${item.x}%`);orb.style.setProperty('--y',`${item.y}%`);orb.style.zIndex=String(3+Math.round(item.balance));orb.querySelector('.orb-balance').textContent=`${item.balance.toFixed(2)}U`}
+      if(item.active){const lifeStage=wealthStage(item);orb.dataset.stage=lifeStage==='wealthy'?'awakened':'normal';orb.dataset.wealthStage=lifeStage;orb.dataset.expression=item.expression||'waiting';orb.style.setProperty('--orb-size',`${displaySize(item.balance)}px`);orb.style.setProperty('--x',`${item.x}%`);orb.style.setProperty('--y',`${item.y}%`);orb.style.zIndex=String(3+Math.round(item.balance));orb.querySelector('.orb-balance').textContent=`${item.balance.toFixed(2)}U`}
       renderCard(id);
     });
     renderPage();
     document.querySelectorAll('[data-test-model]').forEach(button=>{const active=Boolean(state.ai[button.dataset.testModel]?.active);button.disabled=busy||!active;button.classList.toggle('selected',button.dataset.testModel===selected&&active);button.setAttribute('aria-pressed',String(button.dataset.testModel===selected&&active))});
     document.querySelectorAll('[data-test-expression]').forEach(button=>{const active=state.ai[selected]?.active,isCurrent=state.ai[selected]?.expression===button.dataset.testExpression;button.disabled=busy||!active;button.classList.toggle('selected',Boolean(isCurrent));button.setAttribute('aria-pressed',String(Boolean(isCurrent)))});
+    document.querySelectorAll('[data-test-wealth]').forEach(button=>{const active=state.ai[selected]?.active,isCurrent=active&&wealthStage(state.ai[selected])===button.dataset.testWealth;button.disabled=busy||!active;button.classList.toggle('selected',Boolean(isCurrent));button.setAttribute('aria-pressed',String(Boolean(isCurrent)))});
     if(effect)pulse(effect.id,effect.kind);
   }
   function addEvent(text){
     document.querySelector('#arena-message').textContent=text;eventLog.unshift({text,round:state.round,at:Date.now()});if(eventLog.length>100)eventLog.pop();
   }
-  function setBusy(value){busy=value;document.querySelectorAll('[data-test-action],[data-test-model],[data-test-expression]').forEach(button=>button.disabled=value||Boolean(button.dataset.testModel&&!state.ai[button.dataset.testModel].active)||Boolean(button.dataset.testExpression&&!state.ai[selected]?.active))}
+  function setBusy(value){busy=value;document.querySelectorAll('[data-test-action],[data-test-model],[data-test-expression],[data-test-wealth]').forEach(button=>button.disabled=value||Boolean(button.dataset.testModel&&!state.ai[button.dataset.testModel].active)||Boolean((button.dataset.testExpression||button.dataset.testWealth)&&!state.ai[selected]?.active))}
   function chooseFallback(){if(state.ai[selected]?.active)return;selected=activeIds()[0]||selected}
   function setExpression(id,expression){
-    if(busy||!state.ai[id]?.active)return;state.ai[id].expression=expression;renderAll();addEvent(expression==='betting'?`${meta[id].name} 正在下注，进入战斗状态`:`${meta[id].name} 正在等待五分钟结算`);
+    if(busy||!state.ai[id]?.active)return;state.ai[id].expression=expression;renderAll();addEvent(expression==='betting'?`${meta[id].name} 正在下注，开始玩手机`:`${meta[id].name} 正在等待五分钟结算`);
   }
   function applyDelta(id,delta,advance=true){
     if(busy||!state.ai[id]?.active)return;
-    if(advance)state.round+=1;const item=state.ai[id];item.balance=clamp(.5,item.balance+delta,60);item.direction=delta>=0?'看涨':'看空';item.expression=delta>=0?'win':'loss';document.querySelector('#run-status').textContent='进行中';renderAll({id,kind:delta>=0?'gain':'loss'});addEvent(`第 ${state.round} 轮 · ${meta[id].name} ${delta>=0?'盈利':'亏损'} ${signed(delta)}`);remaining=300;setTimeout(checkDevour,650);
+    if(advance)state.round+=1;const item=state.ai[id];item.balance=clamp(0,item.balance+delta,item.base*12);item.direction=delta>=0?'看涨':'看空';item.expression=delta>=0?'win':'loss';document.querySelector('#run-status').textContent='进行中';renderAll({id,kind:delta>=0?'gain':'loss'});addEvent(`第 ${state.round} 轮 · ${meta[id].name} ${delta>=0?'盈利':'亏损'} ${signed(delta)}`);remaining=300;setTimeout(checkDevour,650);
+  }
+  function previewWealthStage(stage){
+    if(busy||!state.ai[selected]?.active||!Object.hasOwn(wealthStageLabels,stage))return;
+    const item=state.ai[selected],targets={delivery:0,massage:item.base*3,wealthy:item.base*10},before=item.balance;
+    item.balance=targets[stage];item.expression=stage==='delivery'?'waiting':'win';renderAll({id:selected,kind:item.balance>=before?'gain':'loss'});addEvent(`${meta[selected].name} 已切换至${wealthStageLabels[stage]}`);
   }
   function randomSettlement(){
-    if(busy||isPaused)return;state.round+=1;document.querySelector('#run-status').textContent='进行中';for(const id of activeIds()){const item=state.ai[id],delta=Number((Math.random()*4.2-1.8).toFixed(2));item.balance=clamp(.5,item.balance+delta,60);item.coin=Math.random()>.5?'BTC':'ETH';item.direction=Math.random()>.5?'看涨':'看空';item.expression=delta>=0?'win':'loss';pulse(id,delta>=0?'gain':'loss')}
+    if(busy||isPaused)return;state.round+=1;document.querySelector('#run-status').textContent='进行中';for(const id of activeIds()){const item=state.ai[id],delta=Number((Math.random()*4.2-1.8).toFixed(2));item.balance=clamp(0,item.balance+delta,item.base*12);item.coin=Math.random()>.5?'BTC':'ETH';item.direction=Math.random()>.5?'看涨':'看空';item.expression=delta>=0?'win':'loss';pulse(id,delta>=0?'gain':'loss')}
     renderAll();addEvent(`第 ${state.round} 轮 · 随机测试结算完成`);remaining=300;setTimeout(checkDevour,700);
   }
   function checkDevour(){
-    if(busy)return;const active=activeIds();if(active.length<2)return;const sorted=[...active].sort((a,b)=>state.ai[b].balance-state.ai[a].balance),predator=sorted[0],victim=sorted.at(-1);if(state.ai[predator].balance>=state.ai[victim].balance*1.8)devour(predator,victim);
+    if(busy)return;const active=activeIds();if(active.length<2)return;const sorted=[...active].sort((a,b)=>state.ai[b].balance-state.ai[a].balance),predator=sorted[0],victim=sorted.at(-1);if(state.ai[victim].balance>0&&state.ai[predator].balance>=state.ai[victim].balance*1.8)devour(predator,victim);
   }
   function forceDevour(){
     if(busy)return;chooseFallback();const predator=selected,victim=activeIds().filter(id=>id!==predator).sort((a,b)=>state.ai[a].balance-state.ai[b].balance)[0];if(!victim){addEvent('只剩一位 AI，无法继续吞噬');return}state.ai[predator].expression='betting';state.ai[victim].expression='waiting';setBusy(true);const needed=state.ai[victim].balance*1.85;if(state.ai[predator].balance<needed){state.ai[predator].balance=needed;renderAll({id:predator,kind:'gain'})}setTimeout(()=>devour(predator,victim,true),window.matchMedia?.('(prefers-reduced-motion: reduce)').matches?30:720);
@@ -282,7 +298,7 @@
       {left:`${end.x}%`,top:`${end.y}%`,transform:'translate(-50%,-50%) scale(.04) rotate(260deg)',opacity:0,filter:'blur(10px) saturate(.2)'}
     ],{duration:reduced?1:650,easing:'cubic-bezier(.4,0,.2,1)',fill:'forwards'});
     await Promise.all([chase.finished.catch(()=>{}),absorbed.finished.catch(()=>{})]);
-    target.classList.add('is-eaten');hunter.classList.add('is-devouring');state.ai[predator].expression='win';state.ai[victim].expression='loss';state.ai[predator].balance=clamp(.5,state.ai[predator].balance+state.ai[victim].balance,60);state.ai[victim].balance=0;state.ai[victim].active=false;state.ai[victim].eatenBy=predator;renderCard(victim);renderPage();particles(predator,'gain');
+    target.classList.add('is-eaten');hunter.classList.add('is-devouring');state.ai[predator].expression='win';state.ai[victim].expression='loss';state.ai[predator].balance=clamp(0,state.ai[predator].balance+state.ai[victim].balance,state.ai[predator].base*12);state.ai[victim].balance=0;state.ai[victim].active=false;state.ai[victim].eatenBy=predator;renderCard(victim);renderPage();particles(predator,'gain');
     await wait(reduced?1:680);chase.cancel();absorbed.cancel();
     if(removeVictim){
       const removed=window.agentSetup?.remove(victim,{silent:true});
@@ -297,7 +313,7 @@
       const removedBase=item?.base||baselineItem?.base||0;
       state.startTotal=Math.max(0,state.startTotal-removedBase);baseline.startTotal=Math.max(0,baseline.startTotal-removedBase);
     }else if(baseline.ai[absorbedBy]&&baselineItem){
-      baseline.ai[absorbedBy].balance=clamp(.5,baseline.ai[absorbedBy].balance+baselineItem.balance,60);
+      baseline.ai[absorbedBy].balance=clamp(0,baseline.ai[absorbedBy].balance+baselineItem.balance,baseline.ai[absorbedBy].base*12);
     }
     orbs[id]?.remove();delete orbs[id];
     document.querySelector(`.model-card[data-model="${CSS.escape(id)}"]`)?.remove();
@@ -315,10 +331,12 @@
   document.querySelector('#test-panel-toggle').onclick=event=>{const panel=document.querySelector('#test-panel'),willOpen=panel.hidden;panel.hidden=!willOpen;event.currentTarget.setAttribute('aria-expanded',String(willOpen))};
   document.querySelectorAll('[data-test-model]').forEach(button=>button.onclick=()=>{selected=button.dataset.testModel;renderAll()});
   document.querySelectorAll('[data-test-expression]').forEach(button=>button.onclick=()=>setExpression(selected,button.dataset.testExpression));
+  document.querySelectorAll('[data-test-wealth]').forEach(button=>button.onclick=()=>previewWealthStage(button.dataset.testWealth));
   document.querySelectorAll('[data-test-action]').forEach(button=>button.onclick=()=>{const action=button.dataset.testAction;if(action==='gain')applyDelta(selected,2);if(action==='loss')applyDelta(selected,-2);if(action==='random')randomSettlement();if(action==='devour')forceDevour();if(action==='reset')restore()});
   window.addEventListener('resize',()=>renderAll());
-  window.orbArena={reset:configure,setPaused:value=>{isPaused=Boolean(value)},randomSettlement,getEvents:()=>eventLog.map(entry=>({...entry}))};
+  window.addEventListener('character-mode-change',()=>renderAll());
+  window.orbArena={reset:configure,setPaused:value=>{isPaused=Boolean(value)},randomSettlement,previewWealthStage,getEvents:()=>eventLog.map(entry=>({...entry}))};
   ids.forEach(ensureAgentDom);assignPositions();renderAll();
   const featuredId=ids.at(-1);if(featuredId)addEvent(`第 ${state.round} 轮 · ${meta[featuredId].name} 判断 ${state.ai[featuredId].coin} ${state.ai[featuredId].direction}`);
-  setInterval(()=>{if(isPaused||document.hidden)return;remaining-=1;if(remaining<=0){remaining=300;randomSettlement()}const min=String(Math.floor(remaining/60)).padStart(2,'0'),sec=String(remaining%60).padStart(2,'0');document.querySelector('#settle-countdown').textContent=`${min}:${sec} 后结算`},1000);
+  if(document.body.dataset.ruleAi!=='true')setInterval(()=>{if(isPaused||document.hidden)return;remaining-=1;if(remaining<=0){remaining=300;randomSettlement()}const min=String(Math.floor(remaining/60)).padStart(2,'0'),sec=String(remaining%60).padStart(2,'0');document.querySelector('#settle-countdown').textContent=`${min}:${sec} 后结算`},1000);
 })();

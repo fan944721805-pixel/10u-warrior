@@ -1,0 +1,142 @@
+// Isolated browser regression: no existing ledger, wallet, provider, or live orders.
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { createWarriorServer } = require('../server');
+const { chromium } = require(process.env.PLAYWRIGHT_PATH || 'playwright');
+
+(async () => {
+  const output = fs.mkdtempSync(path.join(os.tmpdir(), 'warrior-ui-'));
+  const server = createWarriorServer({ walletCli: async () => { throw new Error('UI_TEST_NO_WALLET'); }, marketFetch: async () => { throw new Error('UI_TEST_NO_MARKET'); }, paperFile: null, aiDecisionMode: 'off', liveTradingEnabled: false });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const browser = await chromium.launch({ channel: 'chrome', headless: true });
+  const errors = [];
+  try {
+    const context = await browser.newContext({ viewport: { width: 393, height: 852 } });
+    await require('./price-socket-fixture.cjs')(context);
+    const page = await context.newPage();
+    page.setDefaultTimeout(10000);
+    page.on('pageerror', error => errors.push(error.message));
+    await page.clock.install({ time: new Date(1800000010000) });
+    await page.goto(`${origin}/?offline=1`);
+    await page.waitForFunction(() => window.Warrior?.state?.simulation);
+    console.log((await page.locator('body').ariaSnapshot()).slice(0, 7000));
+    await page.locator('#sim-create button[type=submit]').click();
+    await page.locator('[data-ai-config=deepseek] .ai-choice').click();
+    await page.locator('#budget').fill('10');
+    await page.locator('#rounds [data-rounds="10"]').click();
+    await page.locator('#create-form button[type=submit]').click();
+    assert.equal(await page.evaluate(() => window.Warrior.state.simulation.id), 'default');
+    assert.ok((await page.locator('#create-confirm-dialog').innerText()).includes('20.00 U'));
+    await page.locator('#create-confirm-dialog .secondary').click();
+    assert.equal(await page.evaluate(() => window.Warrior.state.simulation.id), 'default');
+    await page.locator('#create-form button[type=submit]').click();
+    await page.screenshot({ path: path.join(output, 'create-confirm-393.png') });
+    await page.locator('#confirm-create').click();
+    await page.waitForFunction(() => window.Warrior.state.simulation.id !== 'default');
+    const initial = await page.evaluate(() => window.Warrior.state.simulation);
+    assert.equal(initial.initialTotal, 20); assert.equal(initial.config.rounds, 10);
+    assert.deepEqual(initial.agents.map(a => a.cash), [10, 10]);
+    assert.equal(await page.locator('.model-grid .model-card').count(), 2);
+    console.log('Created 2 x 10U through the form');
+    await page.locator('.model-grid .model-card').first().click();
+    assert.ok((await page.locator('#detail-content').innerText()).includes(initial.agents[0].policy.name));
+    await page.locator('#detail-dialog .close-dialog').click();
+    for (const width of [393, 768, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const lang of ['zh-CN', 'en']) {
+        if (await page.locator('html').getAttribute('lang') !== lang) await page.locator('.language-toggle').selectOption(lang === 'zh-CN' ? 'zh' : lang);
+        await page.locator('#end').waitFor({ state: 'visible' });
+        const layout = await page.evaluate(() => ({ width: innerWidth, scrollWidth: document.documentElement.scrollWidth, endHeight: document.querySelector('#end').getBoundingClientRect().height, pauseHeight: document.querySelector('#pause').getBoundingClientRect().height }));
+        assert.ok(layout.scrollWidth <= layout.width, JSON.stringify(layout));
+        assert.ok(layout.endHeight >= 48 && layout.pauseHeight >= 48, JSON.stringify(layout));
+        await page.screenshot({ path: path.join(output, `${width}-${lang}.png`), fullPage: true });
+        console.log('Layout', width, lang);
+      }
+    }
+    await page.locator('#api-connect').click();
+    await page.locator('#ai-settings-strategy-tab').click();
+    await page.locator('#ai-strategy-agent').selectOption('claude');
+    await page.locator('#ai-editor-basic-tab').click();
+    await page.locator('#agent-name').fill('New draft only');
+    await page.locator('[data-agent-strategy=conservative]').click();
+    await page.locator('#save-agent').click();
+    await page.locator('.api-dialog-close').click();
+    await page.locator('.model-grid .model-card').first().click();
+    assert.ok(!(await page.locator('#detail-content').innerText()).includes('New draft only'));
+    await page.locator('#detail-dialog .close-dialog').click();
+    assert.deepEqual(await page.evaluate(() => window.Warrior.state.simulation.config), initial.config);
+    console.log('Editing strategy draft leaves old battle unchanged');
+    for (let round = 1; round <= 10; round++) {
+      const delta = await page.evaluate(() => Math.max(0, window.Warrior.state.simulation.nextSlot - Date.now()));
+      await page.clock.fastForward(delta + 50);
+      await page.locator('.desktop-nav [data-page=overview]').click();
+      await page.waitForFunction(expected => window.Warrior.state.simulation.roundCount === expected, round);
+      console.log('Round', round);
+    }
+    assert.equal(await page.evaluate(() => window.Warrior.state.simulation.enabled), false);
+    await page.clock.fastForward(300050);
+    await page.locator('.desktop-nav [data-page=reports]').click();
+    await page.waitForFunction(() => window.Warrior.state.simulation.status === 'ended');
+    const final = await page.evaluate(() => window.Warrior.state.simulation);
+    assert.equal(final.roundCount, 10);
+    await page.reload();
+    await page.waitForFunction(() => window.Warrior?.state?.simulation?.status === 'ended');
+    assert.deepEqual(await page.evaluate(() => window.Warrior.state.simulation), final);
+    await page.locator('.desktop-nav [data-page=reports]').click();
+    await page.screenshot({ path: path.join(output, 'finished-report.png'), fullPage: true });
+    await page.locator('.desktop-nav [data-page=overview]').click();
+    await page.locator('#sim-create button[type=submit]').click();
+    await page.locator('#create-form button[type=submit]').click();
+    await page.locator('#confirm-create').click();
+    await page.waitForFunction(id => window.Warrior.state.simulation.id !== id, final.id);
+    await page.locator('#end').click();
+    await page.locator('#confirm-end').click();
+    await page.waitForFunction(() => window.Warrior.state.simulation.status === 'ended');
+    const manual = await page.evaluate(() => window.Warrior.state.simulation);
+    await page.reload();
+    await page.waitForFunction(() => window.Warrior?.state?.simulation?.status === 'ended');
+    assert.deepEqual(await page.evaluate(() => window.Warrior.state.simulation), manual);
+    // Explicit navigation away exercises the actual pagehide pause handler.
+    await page.locator('#sim-create button[type=submit]').click();
+    await page.locator('#create-form button[type=submit]').click();
+    await page.locator('#confirm-create').click();
+    await page.waitForFunction(id => window.Warrior.state.simulation.id !== id, manual.id);
+    const runningId = await page.evaluate(() => window.Warrior.state.simulation.id);
+    await page.goto('about:blank');
+    await page.goto(`${origin}/?offline=1`);
+    await page.waitForFunction(() => window.Warrior?.state?.simulation);
+    assert.equal(await page.evaluate(() => window.Warrior.state.simulation.id), runningId);
+    assert.equal(await page.evaluate(() => window.Warrior.state.simulation.enabled), false);
+    assert.deepEqual(errors, []);
+    // Service-backed battles are server-owned; pagehide must not pause them.
+    const serverContext = await browser.newContext({ viewport: { width: 393, height: 852 } });
+    await require('./price-socket-fixture.cjs')(serverContext);
+    const serverPage = await serverContext.newPage();
+    serverPage.setDefaultTimeout(10000);
+    serverPage.on('pageerror', error => errors.push(error.message));
+    await serverPage.goto(origin);
+    await serverPage.waitForFunction(() => window.Warrior?.state?.simulation);
+    console.log((await serverPage.locator('#simulation-commandbar').ariaSnapshot()).slice(0, 1000));
+    await serverPage.locator('#sim-create button[type=submit]').click();
+    await serverPage.locator('[data-ai-config=deepseek] .ai-choice').click();
+    await serverPage.locator('#budget').fill('10');
+    await serverPage.locator('#rounds [data-rounds="10"]').click();
+    await serverPage.locator('#create-form button[type=submit]').click();
+    await serverPage.locator('#confirm-create').click();
+    await serverPage.waitForFunction(() => window.Warrior.state.simulation.id !== 'default');
+    const serviceBattle = await serverPage.evaluate(() => window.Warrior.state.simulation);
+    assert.deepEqual(serviceBattle.agents.map(a => a.cash), [10, 10]);
+    assert.equal(serviceBattle.config.rounds, 10);
+    await serverPage.goto('about:blank');
+    const stillRunning = await (await fetch(`${origin}/api/simulation?battleId=${serviceBattle.id}`)).json();
+    assert.equal(stillRunning.enabled, true, 'Pagehide must keep server-owned battle running');
+    assert.equal(stillRunning.status, 'running');
+    await serverContext.close();
+    assert.deepEqual(errors, []);
+    console.log(JSON.stringify({ result: 'PASS', modes: ['offline browser', 'isolated service UI'], checks: ['2 x 10U', '10 rounds + final settlement', 'manual end', 'immutable recap after reload', 'offline pagehide pause / server-owned continuation', 'zh/en at 393/768/1440', '48px stop controls'], output }));
+    await context.close();
+  } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }
+})().catch(error => { console.error(error); process.exitCode = 1; });

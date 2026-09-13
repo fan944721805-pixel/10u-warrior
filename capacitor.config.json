@@ -1,0 +1,12 @@
+{
+  "appId": "com.tenuwarrior.app",
+  "appName": "10U 战神",
+  "webDir": "public",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": false,
+    "backgroundColor": "#5d3775"
+  }
+}

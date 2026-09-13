@@ -1,0 +1,102 @@
+body #simulation-commandbar { margin-bottom: 24px; }
+.delete-battle-button { display:block; width:100%; min-height:48px; margin-top:12px; padding:10px; border:0; border-radius:10px; background:transparent; color:#ad5772; font-size:12px; }
+.delete-battle-button:hover { background:#fff0f5; }
+#delete-battle-dialog { width:min(420px,calc(100vw - 28px)); box-sizing:border-box; padding:24px; border:1px solid #dfd1ea; border-radius:20px; }
+#delete-battle-dialog h2 { font-size:20px; margin:0 0 16px; }
+#delete-battle-dialog p { font-size:13px; color:#8c789b; line-height:1.7; }
+#delete-battle-dialog .delete-battle-error { color:#ad5772; }
+.delete-battle-error:empty { display:none; }
+.delete-battle-actions { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:20px; }
+.delete-battle-actions button { min-height:48px; padding:10px; border-radius:10px; font-size:13px; }
+.delete-battle-confirm { border:1px solid #e8c6d2; color:#ac496b; background:#fcecf2; }
+.delete-battle-actions button:disabled { opacity:.5; cursor:wait; }
+.simulation-source-notice { margin: -8px 0 20px; color: #795e8d; font-size: 12px; line-height: 1.6; }
+.simulation-source-notice > summary { min-height: 48px; padding: 12px 14px; box-sizing: border-box; cursor: pointer; border: 1px solid #e3d6ed; border-radius: 12px; background: #faf7fd; }
+.simulation-source-notice > p { padding: 0 14px; overflow-wrap: anywhere; }
+.agent-live-intent { display: none; }
+body[data-betting-mode=live] .agent-live-intent:not([hidden]) { display: block; width: 100%; min-height: 48px; margin-top: 12px; padding: 10px; white-space: normal; }
+.performance { min-width: 0; }
+.performance .section-top:has(.battle-switcher:not([hidden])) { flex-wrap: nowrap; gap: 16px; }
+.battle-switcher { display: flex; gap: 18px; flex: 0 1 auto; min-width: 0; overflow-x: auto; max-width: 100%; margin-right: auto; scrollbar-width: thin; }
+.battle-switcher[hidden] { display: none; }
+.battle-switcher:not([hidden]) + .experiment-title { display: none; }
+.battle-switch { position: relative; display: flex; align-items: center; gap: 7px; flex: 0 0 auto; min-height: 48px; padding: 0 2px; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: #9a87aa; text-align: left; white-space: nowrap; }
+.battle-switch strong { font-size: 14px; }
+.battle-switch span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.battle-switch small { color: inherit; font-size: 10px; font-weight: 500; }
+.battle-switch::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: #c7bdce; }
+.battle-switch[data-status=running]::before { background: #9bb444; }
+.battle-switch[data-status=paused]::before,.battle-switch[data-status=settling]::before { background: #c4a368; }
+.battle-switch[aria-pressed=true] { color: #53396b; }
+.battle-switch[aria-pressed=true]::after { content: ''; position: absolute; bottom: 0; left: 10px; right: 0; height: 3px; border-radius: 3px; background: #9d82bf; }
+.battle-switch:hover { color: #53396b; background: transparent; }
+.battle-switch:focus-visible { outline: 3px solid #a287c4; outline-offset: -3px; }
+@media(max-width:480px) { .battle-switcher { gap: 14px; } .battle-switch { gap: 5px; } .battle-switch strong { font-size: 13px; } }
+body .topbar .betting-mode-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 48px; padding: 0 14px; border: 1px solid #c8b3de;
+  border-radius: 14px; background: #f7f1ff; color: #72508a;
+  font-size: 13px; font-weight: 700; white-space: nowrap;
+}
+body .topbar .betting-mode-toggle::before { content: ''; width: 6px; height: 6px; margin-right: 7px; border-radius: 50%; background: #a4ba47; }
+body .topbar .betting-mode-toggle[aria-pressed=true] { background: #fff0e7; border-color: #dfb899; color: #a4512e; }
+body .topbar .betting-mode-toggle[aria-pressed=true]::before { background: #c97a40; }
+body #live-agent-dialog { max-width: 600px; padding: 22px; border: 1px solid #d8c4e6; border-radius: 22px; background: #fdfaff; }
+body .live-manage-agents { min-height: 48px; padding: 0 16px; font-size: 13px; margin-left: auto; }
+body .live-manage-agents[hidden] { display: none; }
+body[data-betting-mode=live] .arena-toolbar { flex-wrap: wrap; gap: 10px; }
+.live-participation-badge { display: none; }
+body[data-betting-mode=live] .model-card[data-live-included=false] { opacity: .62; }
+body[data-betting-mode=live] .model-card[data-live-included=false] .live-participation-badge { display: inline-block; margin-top: 10px; padding: 4px 8px; border-radius: 6px; background: #f1eaf7; color: #795e8d; font-size: 11px; }
+body .live-betting-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+body .live-betting-heading h2 { margin: 0; font-size: 20px; letter-spacing: 0; }
+body .live-betting-heading .icon-button { width: 48px; height: 48px; border: 1px solid #e0d2eb; border-radius: 12px; }
+body .live-betting-status { padding: 6px 10px; border-radius: 8px; background: #fff1e8; color: #9a694b; font-size: 12px; }
+body .live-betting-notice, body .live-betting-summary { color: #877291; font-size: 14px; line-height: 1.7; }
+body .live-betting-summary { padding: 24px 0; border-block: 1px solid #eee4f2; }
+body .live-betting-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 20px; }
+body .live-betting-actions button { min-height: 48px; font-size: 14px; }
+.live-service-details { margin-top: 14px; color: #877291; font-size: 12px; }
+.live-service-details > summary { cursor: pointer; min-height: 48px; display: flex; align-items: center; }
+.live-service-details button { min-height: 48px; margin: 4px; font-size: 12px; padding: 8px 12px; }
+.live-agent-roster { margin-top: 24px; }
+.live-agent-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.live-agent-heading h2 { margin: 0; font-size: 16px; }
+.live-agent-count { font-size: 12px; color: #877291; font-variant-numeric: tabular-nums; }
+.live-agent-note, .live-agent-empty { font-size: 12px; color: #877291; margin: 8px 0 14px; }
+.live-agent-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(240px,1fr)); gap: 12px; }
+.live-agent-option { display: flex; align-items: center; gap: 10px; min-height: 86px; padding: 14px; border: 1px solid #ded0ea; border-radius: 16px; background: #faf7fd; cursor: pointer; }
+.live-agent-option[data-included=true] { border-color: #bba1d5; background: #f2edf9; }
+.live-agent-option:focus-within { outline: 3px solid #a287c4; outline-offset: 2px; }
+.live-agent-option input { width: 18px; height: 18px; flex: 0 0 18px; margin: 0; accent-color: #78539a; }
+.live-agent-option .mini-ai-avatar { width: 44px; height: 44px; flex: 0 0 44px; }
+.live-agent-copy { display: grid; gap: 5px; min-width: 0; }
+.live-agent-copy strong { font-size: 15px; overflow-wrap: anywhere; }
+.live-agent-copy small { color: #8c789b; font-size: 11px; overflow-wrap: anywhere; }
+.live-agent-state { margin-left: auto; color: #795e8d; font-size: 11px; white-space: nowrap; }
+.live-agent-option[data-included=false] .mini-ai-avatar { filter: grayscale(.8); opacity: .65; }
+@media (max-width:480px) { .live-agent-grid { grid-template-columns: minmax(0,1fr); } }
+body #live-risk-dialog { max-width: 460px; padding: 22px; border: 1px solid #d8c4e6; border-radius: 22px; background: #fdfaff; }
+.live-risk-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.live-risk-top h2 { margin: 0; font-size: 20px; line-height: 1.4; }
+.live-risk-top .icon-button { flex: 0 0 48px; height: 48px; border: 1px solid #e0d2eb; border-radius: 12px; color: #795e8d; }
+.live-risk-description ul { margin: 16px 0 20px; padding-left: 20px; color: #715d80; font-size: 13px; line-height: 1.7; }
+.live-risk-description li + li { margin-top: 10px; }
+.live-risk-description li::marker { color: #ae7a48; }
+.live-risk-actions { display: grid; gap: 10px; }
+.live-risk-actions button { width: 100%; min-height: 48px; padding: 12px; font-size: 14px; border-radius: 12px; }
+.live-risk-actions .primary { background: #e6fa79; color: #493052; box-shadow: 0 2px 0 #b3bf71; }
+.live-risk-actions .secondary { background: #f1eaf7; color: #795e8d; }
+@media (max-width: 900px) {
+  body .topbar { flex-wrap: wrap; height: auto; min-height: 72px; }
+  body .topbar .top-right { flex-wrap: wrap; }
+  body .topbar .betting-mode-toggle { width: auto; min-width: 88px; padding-inline: 10px; }
+}
+@media (max-width: 480px) {
+  body .topbar { padding: 10px 14px; gap: 10px; }
+  body .topbar .top-right { width: 100%; justify-content: flex-end; gap: 8px; }
+  body .topbar .betting-mode-toggle { margin-right: auto; }
+  body #simulation-commandbar { margin-bottom: 16px; }
+  body #live-agent-dialog { padding: 20px 16px; }
+  body .live-betting-actions { grid-template-columns: 1fr; }
+}

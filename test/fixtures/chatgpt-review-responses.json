@@ -1,0 +1,5 @@
+[
+  {"round_id":"offline-review-round","action":"BET","direction":"UP","risk_mode":"NORMAL","confidence":80,"stake_usdt":20,"stake_pct":20,"factors":[],"reason":"Offline replay fixture: aggressive strategy bets UP with 20 USDT.","data_fresh":true,"warnings":[]},
+  {"round_id":"offline-review-round","action":"SKIP","direction":null,"risk_mode":"WAIT","confidence":50,"stake_usdt":0,"stake_pct":0,"factors":[],"reason":"Offline replay fixture: intelligent strategy skips this round.","data_fresh":true,"warnings":[]},
+  {"round_id":"offline-review-round","action":"BET","direction":"UP","risk_mode":"ALL_IN","confidence":99,"stake_usdt":100,"stake_pct":100,"factors":[],"reason":"Offline rejection fixture: conservative strategy attempts an invalid 100 USDT all-in.","data_fresh":true,"warnings":[]}
+]

@@ -1,0 +1,27 @@
+#round-recap-dialog { max-width:480px; padding:24px; border:1px solid #d6c2e6; border-radius:24px; background:#fffaff; }
+#round-recap-dialog h2 { margin:0; font-size:24px; }
+#round-recap-dialog .icon-button { width:48px; height:48px; border:1px solid #e0d2ec; border-radius:12px; background:#fff; color:#795c90; }
+.round-recap-meta { margin:14px 0 20px; color:#8c789b; font-size:12px; line-height:1.7; }
+.round-recap-profit { padding:20px; border-radius:18px; background:#f2eaf9; text-align:center; }
+.round-recap-profit > span { font-size:13px; color:#8c789b; }
+.round-recap-profit strong { display:block; margin-top:8px; font-size:38px; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.round-recap-totals { display:grid; grid-template-columns:1fr 1fr; gap:12px; padding:18px 0; border-bottom:1px solid #e9def0; }
+.round-recap-totals > div { display:grid; gap:6px; text-align:center; min-width:0; }
+.round-recap-totals span { font-size:12px; color:#8c789b; }
+.round-recap-totals strong { font-size:16px; color:#493052; overflow-wrap:anywhere; }
+.round-recap-agents { max-height:260px; overflow:auto; }
+.round-recap-agent { display:grid; grid-template-columns:32px minmax(0,1fr) auto; gap:10px; align-items:center; padding:14px 0; border-bottom:1px solid #eee5f4; }
+.round-recap-agent > div { min-width:0; }
+.round-recap-agent strong { font-size:14px; overflow-wrap:anywhere; }
+.round-recap-agent small { display:block; margin-top:4px; color:#8c789b; font-size:11px; }
+.round-recap-agent b { font-size:14px; font-variant-numeric:tabular-nums; }
+#round-recap-dialog .round-recap-note { margin:16px 0; color:#8c789b; font-size:12px; text-align:center; }
+.round-recap-actions { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+#round-recap-dialog .round-recap-actions button { min-height:48px; padding:10px; border-radius:12px; font-size:13px; }
+#round-recap-dialog .round-recap-actions .primary { box-shadow:0 3px 0 #635077; }
+@media(max-width:480px) {
+  #round-recap-dialog { padding:16px; }
+  .round-recap-profit strong { font-size:32px; }
+  .round-recap-agent { gap:8px; }
+  .round-recap-agent b { font-size:13px; }
+}
