@@ -88,10 +88,11 @@ async function attach() {
     for(let i=0;i<20;i++) {
       xml=dump();
       const ns=nodes(xml); for(const n of ns.filter(n=>n['resource-id']===pkg+':id/widget_coin'))seen.add(n.text);
-      const marker=ns.find(n=>n['resource-id']===pkg+':id/widget_battle' && n.text==='Widget QA 自定义');
+      const rows=saved()?.rows||[];
+      const marker=ns.find(n=>n['resource-id']===pkg+':id/widget_coin' && rows[Number(n.text.match(/ · (\d+)\//)?.[1])-1]?.battleId===battleId);
       if(marker) {
         const bounds=marker.bounds.match(/\d+/g).map(Number), list=control(xml,'widget_stack').bounds.match(/\d+/g).map(Number);
-        if(bounds[1]>list[1]+130 && bounds[3]<list[3]-150)return marker;
+        if(bounds[1]>list[1]+10 && bounds[3]<list[3]-10)return marker;
       }
       const [x1,y1,x2,y2]=control(xml,'widget_stack').bounds.match(/\d+/g).map(Number), x=Math.round((x1+x2)/2);
       adb('shell','input','swipe',String(x),String(y2-25),String(x),String(y1+60),'450'); await sleep(400);
@@ -114,7 +115,7 @@ async function attach() {
   assert.ok(saved().rows.filter(r=>r.battleId===battleId).every(r=>r.action==='Wait'));
   console.log('Verified native projection, scroll, warm detail, funding and bilingual updates');
   adb('shell','input','keyevent','KEYCODE_HOME'); await sleep(700); xml=dump();
-  assert.equal(control(xml,'widget_title').text,'Strategy status'); screenshot('en');
+  assert.ok(!control(xml,'widget_title')&&!control(xml,'widget_hint'),'Only the strategy card occupies the widget'); screenshot('en');
   // Swipe backwards as well as forwards.
   let [x1,y1,x2,y2]=control(xml,'widget_stack').bounds.match(/\d+/g).map(Number), x=Math.round((x1+x2)/2);
   adb('shell','input','swipe',String(x),String(y1+50),String(x),String(y2-30),'450'); await sleep(500);
@@ -124,7 +125,7 @@ async function attach() {
   adb('shell','am','kill',pkg);
   const staleStart=Date.now();
   console.log('Waiting for the actual Android snapshot-expiry alarm after process stop');
-  await until(()=>{xml=dump();return control(xml,'widget_freshness')?.text==='Updates stopped. Tap to open app.';},240000);
+  await until(()=>{xml=dump();return nodes(xml).some(n=>n['resource-id']===pkg+':id/widget_status'&&n.text==='Updates stopped. Tap to open app.');},240000);
   screenshot('stale');
   tap(await findTestCard()); await attach();
   await page.waitForFunction(id=>window.Warrior.state.simulation?.id===id && document.querySelector('#detail-dialog').open,battleId);

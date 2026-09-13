@@ -2,7 +2,9 @@
 
 移动端优先的 AI 策略模拟对局应用：选择角色、分配虚拟本金，观察决策、结算、收益曲线与战报。使用原生 HTML/CSS/JavaScript 和 Node.js，保留动漫紫、荧光黄及卡通战神风格。
 
-**当前版本：Web 包 0.1.0 / Android 0.1.7（versionCode 8）· 2026-09-13 功能快照。** 自动对局使用模拟资金，真实交易默认关闭。Node 网页版面向本机单用户；Android 在手机本地运行并直接联网。功能更新单独记录在 [CHANGELOG.md](./CHANGELOG.md)。
+**当前试用发布：0.1.9 · Android versionCode 10 · Web npm 包 0.1.0。** 自动对局使用模拟资金，真实交易默认关闭。Node 网页版面向本机单用户；Android 在手机本地运行并直接联网。功能更新单独记录在 [CHANGELOG.md](./CHANGELOG.md)。
+
+下载 [GitHub 试用发布](https://github.com/fan944721805-pixel/10u-warrior/releases/tag/v0.1.9-preview.1)：安卓安装 APK；电脑解压 Web ZIP，安装 Node.js 22+ 后双击 `start-web.cmd`。详见 [最简试用说明](./TRY_ME.md)。APK 使用现有测试签名；Web 试用启动器关闭真实报价和交易。
 
 ## 快速开始
 
@@ -108,7 +110,7 @@ npm test
 
 ## Android APK
 
-Android 0.1.7 不依赖本项目服务端：手机直接获取公开行情并调用已配置的 AI，对局与策略保存在设备加密账本中。后台服务持有唯一执行实例，支持运行通知、后台设置引导和桌面策略小组件；仍受系统与厂商省电策略限制。不连接钱包、不读取真实资产、不提交真实交易。本机构建测试 APK：
+Android 0.1.9 不依赖本项目服务端：手机直接获取公开行情并调用已配置的 AI，对局与策略保存在设备加密账本中。后台服务持有唯一执行实例，支持运行通知、后台设置引导和桌面策略小组件；仍受系统与厂商省电策略限制。不连接钱包、不读取真实资产、不提交真实交易。本机构建测试 APK：
 
 ```powershell
 npm run android:apk
@@ -233,7 +235,7 @@ npm run dev
 
 ## 验证状态与部署
 
-2026-09-13 本次上传前检查：
+2026-09-13 上次源码上传检查（0.1.9 发布包的构建与验签记录见 GitHub Release）：
 
 - `npm run check` 通过，`npm test` **314/314** 通过；测试前重新生成手机运行包。
 - `node scripts/verify-mobile-runtime.cjs` 通过：手机模拟运行、网络失败与恢复、AI 配置保存/重载、旧版离线入口，以及四语言、360/768/1440px 布局；使用原生桥和外部响应替身，不请求电脑 API。
@@ -252,6 +254,6 @@ AI API 设置通过本机服务保存和测试连接，并用于显式绑定模�
 
 ## English quick start
 
-10U Warrior is a local-first strategy simulation with 17 character strategies, including Liang Xi, up to 8 Agents per battle, isolated paper balances, live market references, decision history, equity charts and round recaps. Chinese, English, Japanese and Korean are supported across phone, tablet and desktop layouts. Android 0.1.7 runs one shared simulation engine in a foreground service, fetches live market data and calls configured AI providers directly over HTTPS, and encrypts local records with Android Keystore. It includes a scrollable strategy widget and notification pause controls. Background operation remains subject to Android restrictions; process restarts restore battles paused. It needs no PC or self-hosted server. The legacy offline demo remains available separately.
+10U Warrior is a local-first strategy simulation with 17 character strategies, including Liang Xi, up to 8 Agents per battle, isolated paper balances, live market references, decision history, equity charts and round recaps. Chinese, English, Japanese and Korean are supported across phone, tablet and desktop layouts. Android 0.1.9 runs one shared simulation engine in a foreground service, fetches live market data and calls configured AI providers directly over HTTPS, and encrypts local records with Android Keystore. It includes a scrollable strategy widget and notification pause controls. Background operation remains subject to Android restrictions; process restarts restore battles paused. It needs no PC or self-hosted server. The legacy offline demo remains available separately.
 
 Use Node.js 22+, run `npm ci`, then `npm start`, and open [the local app](http://127.0.0.1:5174). Run `npm run check` and `npm test` for offline validation. External AI models are optional; live trading is disabled by default and requires a quote → explicit per-order confirmation → single submission workflow. No wallet or API credentials are bundled. See [AI_AGENT_USAGE.md](./AI_AGENT_USAGE.md), [Android build instructions](./ANDROID_BUILD.md), and the [feature changelog](./CHANGELOG.md).

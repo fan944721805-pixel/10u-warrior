@@ -1,0 +1,10 @@
+// Explicit opt-in for GitHub trial APKs. Uses the same local test certificate
+// as earlier debug builds, while retaining the non-debuggable Release variant.
+// Never use this signing profile for an app-store production release.
+gradle.beforeProject { project ->
+    project.pluginManager.withPlugin('com.android.application') {
+        project.androidComponents.finalizeDsl { android ->
+            android.buildTypes.release.signingConfig = android.signingConfigs.debug
+        }
+    }
+}

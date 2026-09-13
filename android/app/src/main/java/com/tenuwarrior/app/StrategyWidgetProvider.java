@@ -12,7 +12,10 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.SystemClock;
-import android.view.View;
+import android.util.SizeF;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import android.widget.RemoteViews;
 import org.json.JSONObject;
 
@@ -46,8 +49,8 @@ public class StrategyWidgetProvider extends AppWidgetProvider {
             AlarmManager alarm = context.getSystemService(AlarmManager.class);
             Intent intent = new Intent(context, StrategyWidgetProvider.class).setAction(EXPIRE);
             PendingIntent expiry = PendingIntent.getBroadcast(context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-            // Non-exact and non-waking. The visible age clock also keeps old data
-            // identifiable if Android delays this stale-state refresh in Doze.
+            // Non-exact and non-waking. Expiry replaces the card status with a
+            // stale warning; Android may delay this refresh while in Doze.
             long age = Math.max(0, System.currentTimeMillis() - prefs(context).getLong("updatedAt", 0));
             if (alarm != null && fresh(context)) alarm.set(AlarmManager.ELAPSED_REALTIME, SystemClock.elapsedRealtime() + Math.max(1, FRESH_MS - age), expiry);
         }
@@ -63,13 +66,31 @@ public class StrategyWidgetProvider extends AppWidgetProvider {
         scheduleExpiry(context);
     }
     static void render(Context context, AppWidgetManager manager, int id) {
+        Bundle options = manager.getAppWidgetOptions(id);
+        if (Build.VERSION.SDK_INT >= 31) {
+            ArrayList<SizeF> sizes = options.getParcelableArrayList(AppWidgetManager.OPTION_APPWIDGET_SIZES);
+            Map<SizeF, RemoteViews> layouts = new LinkedHashMap<>();
+            if (sizes != null) for (SizeF size : sizes) {
+                if (size.getWidth() > 0 && size.getHeight() > 0 && layouts.size() < 16)
+                    layouts.put(size, sizedViews(context, id, size.getWidth(), size.getHeight()));
+            }
+            if (!layouts.isEmpty()) { manager.updateAppWidget(id, new RemoteViews(layouts)); return; }
+        }
+        // Some OEM launchers omit the exact sizes. Retain the platform's two
+        // orientation sizes instead of assuming the original fixed row height.
+        RemoteViews portrait = sizedViews(context, id, options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 250), options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 220));
+        RemoteViews landscape = sizedViews(context, id, options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH, 250), options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 220));
+        manager.updateAppWidget(id, new RemoteViews(landscape, portrait));
+    }
+    private static RemoteViews sizedViews(Context context, int id, float width, float height) {
         JSONObject data = snapshot(context);
         RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.strategy_widget);
         Intent adapter = new Intent(context, StrategyWidgetService.class).putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id);
         adapter.setData(Uri.parse("warrior-widget://adapter/" + id));
         if (Build.VERSION.SDK_INT >= 31) {
-            StrategyWidgetService.Factory factory = new StrategyWidgetService.Factory(context);
+            StrategyWidgetService.Factory factory = new StrategyWidgetService.Factory(context, id);
             factory.onCreate();
+            factory.size(Math.max(1, width), Math.max(1, height));
             RemoteViews.RemoteCollectionItems.Builder items = new RemoteViews.RemoteCollectionItems.Builder()
                     .setHasStableIds(true).setViewTypeCount(1);
             for (int position = 0; position < factory.getCount(); position++) items.addItem(factory.getItemId(position), factory.getViewAt(position));
@@ -78,32 +99,25 @@ public class StrategyWidgetProvider extends AppWidgetProvider {
             views.setRemoteAdapter(R.id.widget_stack, adapter);
         }
         views.setEmptyView(R.id.widget_stack, R.id.widget_empty);
-        views.setTextViewText(R.id.widget_title, text(context, data, "title", R.string.widget_title));
-        views.setTextViewText(R.id.widget_hint, text(context, data, "hint", R.string.widget_hint));
         views.setTextViewText(R.id.widget_empty, text(context, data, "empty", R.string.widget_empty));
-        views.setTextViewText(R.id.widget_freshness, text(context, data, fresh(context) ? "snapshot" : "stale", fresh(context) ? R.string.widget_snapshot : R.string.widget_stale));
-        long at = prefs(context).getLong("updatedAt", 0);
-        views.setViewVisibility(R.id.widget_age, at > 0 ? View.VISIBLE : View.GONE);
-        views.setChronometer(R.id.widget_age, SystemClock.elapsedRealtime() - Math.max(0, System.currentTimeMillis() - at),
-                text(context, data, "age", R.string.widget_age), true);
         Intent open = new Intent(context, MainActivity.class).setAction("com.tenuwarrior.app.WIDGET_OPEN")
                 .setData(Uri.parse("warrior-widget://open/" + id)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         PendingIntent template = PendingIntent.getActivity(context, id, open,
                 PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_MUTABLE : 0));
         views.setPendingIntentTemplate(R.id.widget_stack, template);
         PendingIntent launch = PendingIntent.getActivity(context, id + 100000, new Intent(open), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        views.setOnClickPendingIntent(R.id.widget_open, launch);
-        views.setContentDescription(R.id.widget_open, text(context, data, "open", R.string.widget_open));
         views.setOnClickPendingIntent(R.id.widget_empty, launch);
-        views.setOnClickPendingIntent(R.id.widget_freshness, launch);
-        manager.updateAppWidget(id, views);
+        return views;
     }
     @Override public void onUpdate(Context context, AppWidgetManager manager, int[] ids) {
         for (int id : ids) render(context, manager, id);
         manager.notifyAppWidgetViewDataChanged(ids, R.id.widget_stack);
         scheduleExpiry(context);
     }
-    @Override public void onAppWidgetOptionsChanged(Context context, AppWidgetManager manager, int id, Bundle options) { render(context, manager, id); }
+    @Override public void onAppWidgetOptionsChanged(Context context, AppWidgetManager manager, int id, Bundle options) {
+        render(context, manager, id);
+        if (Build.VERSION.SDK_INT < 31) manager.notifyAppWidgetViewDataChanged(id, R.id.widget_stack);
+    }
     @Override public void onReceive(Context context, Intent intent) {
         super.onReceive(context, intent);
         if (EXPIRE.equals(intent.getAction())) updateAll(context);

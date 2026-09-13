@@ -12,6 +12,8 @@ test('widget reports each battle/agent independently and excludes deposits from 
   const {rows} = project([fixture(),second,{...fixture(),placeholder:true}],{now:150});
   assert.equal(rows.length,2); assert.notEqual(rows[0].key,rows[1].key);
   assert.equal(rows[0].funds,'模拟资金  18.00 U'); assert.equal(rows[0].profit,'已结算收益  +3.00 U');
+  assert.equal(rows[0].fundsValue,'18.00 U'); assert.equal(rows[0].profitValue,'+3.00 U');
+  assert.equal(rows[0].fundsLabel,'模拟资金'); assert.equal(rows[0].roundLabel,'本轮下注');
   assert.equal(rows[0].action,'看涨'); assert.equal(rows[0].battleName,'自定义 Alpha');
   assert.ok(!JSON.stringify(rows).includes('DO_NOT_EXPORT'));
 });

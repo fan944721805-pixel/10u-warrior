@@ -47,10 +47,24 @@ public class StrategyWidgetPlugin extends Plugin {
     }
     @PluginMethod public void pin(PluginCall call) {
         getActivity().runOnUiThread(() -> {
+          try {
             AppWidgetManager manager = AppWidgetManager.getInstance(getContext());
+            ComponentName provider = new ComponentName(getContext(), StrategyWidgetProvider.class);
+            int countBefore = manager.getAppWidgetIds(provider).length;
             boolean supported = Build.VERSION.SDK_INT >= 26 && manager.isRequestPinAppWidgetSupported();
-            if (supported) supported = manager.requestPinAppWidget(new ComponentName(getContext(), StrategyWidgetProvider.class), null, null);
-            JSObject result = new JSObject(); result.put("supported", supported); call.resolve(result);
+            if (supported) supported = manager.requestPinAppWidget(provider, null, null);
+            // A launcher accepting the request does not prove that it showed a
+            // dialog or placed the widget. The UI checks the actual instance count.
+            JSObject result = new JSObject(); result.put("supported", supported);
+            result.put("countBefore", countBefore); call.resolve(result);
+          } catch (Exception error) { call.reject("Widget pin request unavailable"); }
         });
+    }
+    @PluginMethod public void pinStatus(PluginCall call) {
+        try {
+            int count = AppWidgetManager.getInstance(getContext()).getAppWidgetIds(
+                    new ComponentName(getContext(), StrategyWidgetProvider.class)).length;
+            JSObject result = new JSObject(); result.put("count", count); call.resolve(result);
+        } catch (Exception error) { call.reject("Widget status unavailable"); }
     }
 }

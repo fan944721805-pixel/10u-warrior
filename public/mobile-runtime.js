@@ -5435,6 +5435,11 @@ Return exactly one JSON object`);
               coin: a.policy?.coin || "",
               funds: `${t2("\u6A21\u62DF\u8D44\u91D1")}  ${amount(a.equity)} U`,
               profit: `${t2("\u5DF2\u7ED3\u7B97\u6536\u76CA")}  ${profit > 0 ? "+" : ""}${amount(profit)} U`,
+              fundsLabel: t2("\u6A21\u62DF\u8D44\u91D1"),
+              fundsValue: `${amount(a.equity)} U`,
+              profitLabel: t2("\u5DF2\u7ED3\u7B97\u6536\u76CA"),
+              profitValue: `${profit > 0 ? "+" : ""}${amount(profit)} U`,
+              roundLabel: t2("\u672C\u8F6E\u4E0B\u6CE8"),
               positive: Number.isFinite(profit) && profit >= 0,
               action: direction || t2(orders.length ? "\u7B49\u5F85\u7ED3\u7B97" : "\u89C2\u671B"),
               status: t2(state),
@@ -5481,7 +5486,7 @@ Return exactly one JSON object`);
             const signature = JSON.stringify(payload);
             if (signature !== lastSignature || Date.now() - lastSent >= 25e3) {
               if (api.serviceOwned) {
-                const words = ["\u6A21\u62DF\u8D44\u91D1", "\u5DF2\u7ED3\u7B97\u6536\u76CA", "\u770B\u6DA8", "\u770B\u7A7A", "\u89C2\u671B", "\u7B49\u5F85\u7ED3\u7B97", "\u884C\u60C5\u8FDE\u63A5\u4E2D\u65AD", "\u7B49\u5F85\u6062\u590D", ...Object.values(statuses)];
+                const words = ["\u6A21\u62DF\u8D44\u91D1", "\u5DF2\u7ED3\u7B97\u6536\u76CA", "\u672C\u8F6E\u4E0B\u6CE8", "\u770B\u6DA8", "\u770B\u7A7A", "\u89C2\u671B", "\u7B49\u5F85\u7ED3\u7B97", "\u884C\u60C5\u8FDE\u63A5\u4E2D\u65AD", "\u7B49\u5F85\u6062\u590D", ...Object.values(statuses)];
                 await api.configureWidget({
                   labels: payload.labels,
                   words: Object.fromEntries(words.map((word) => [word, t(word)])),
@@ -5542,14 +5547,53 @@ Return exactly one JSON object`);
         section.style.cssText = "border-top:1px solid #d1bce3;margin-top:20px;padding-top:12px";
         const button = section.querySelector("button");
         button.style.minHeight = "48px";
+        const pinStatus = section.querySelector("[role=status]");
+        const pinHelp = document.createElement("p");
+        pinHelp.hidden = true;
+        pinHelp.textContent = "\u8BF7\u957F\u6309\u684C\u9762 \u2192 \u5C0F\u7EC4\u4EF6 \u2192 10U \u6218\u795E";
+        section.append(pinHelp);
+        let pinAttempt = null, pinTimer;
+        async function checkPin() {
+          const attempt = pinAttempt;
+          if (!attempt) return;
+          try {
+            const result = await plugin.pinStatus();
+            if (pinAttempt !== attempt) return;
+            if (result.count > attempt.countBefore) {
+              pinStatus.textContent = "\u5C0F\u7EC4\u4EF6\u5DF2\u6DFB\u52A0\u5230\u684C\u9762";
+              pinHelp.hidden = true;
+              pinAttempt = null;
+              clearTimeout(pinTimer);
+              return;
+            }
+          } catch {
+          }
+          if (pinAttempt === attempt) {
+            pinStatus.textContent = "\u5C1A\u672A\u786E\u8BA4\u6DFB\u52A0\u3002\u82E5\u6CA1\u6709\u5F39\u7A97\uFF0C\u8BF7\u4ECE\u684C\u9762\u624B\u52A8\u6DFB\u52A0\u3002";
+            pinHelp.hidden = false;
+          }
+        }
+        root.document.addEventListener("visibilitychange", () => {
+          if (!root.document.hidden) void checkPin();
+        });
         button.onclick = async () => {
           button.disabled = true;
+          clearTimeout(pinTimer);
+          pinAttempt = null;
+          pinStatus.textContent = "";
+          pinHelp.hidden = true;
           try {
             await sync();
             const result = await plugin.pin();
-            section.querySelector("[role=status]").textContent = result.supported ? "\u8BF7\u5728\u7CFB\u7EDF\u5F39\u7A97\u4E2D\u6DFB\u52A0\u5C0F\u7EC4\u4EF6" : "\u8BF7\u957F\u6309\u684C\u9762 \u2192 \u5C0F\u7EC4\u4EF6 \u2192 10U \u6218\u795E";
+            pinHelp.hidden = false;
+            if (result.supported) {
+              pinStatus.textContent = "\u8BF7\u786E\u8BA4\u7CFB\u7EDF\u6DFB\u52A0\u63D0\u793A\uFF1B\u82E5\u6CA1\u6709\u5F39\u7A97\uFF0C\u53EF\u4ECE\u684C\u9762\u624B\u52A8\u6DFB\u52A0\u3002";
+              pinAttempt = { countBefore: result.countBefore };
+              pinTimer = setTimeout(() => void checkPin(), 6e3);
+            } else pinStatus.textContent = "\u5F53\u524D\u684C\u9762\u672A\u63A5\u53D7\u6DFB\u52A0\u8BF7\u6C42\uFF0C\u8BF7\u624B\u52A8\u6DFB\u52A0\u3002";
           } catch {
-            section.querySelector("[role=status]").textContent = "\u8BF7\u957F\u6309\u684C\u9762 \u2192 \u5C0F\u7EC4\u4EF6 \u2192 10U \u6218\u795E";
+            pinStatus.textContent = "\u5F53\u524D\u684C\u9762\u672A\u63A5\u53D7\u6DFB\u52A0\u8BF7\u6C42\uFF0C\u8BF7\u624B\u52A8\u6DFB\u52A0\u3002";
+            pinHelp.hidden = false;
           } finally {
             button.disabled = false;
           }

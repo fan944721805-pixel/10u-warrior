@@ -14,6 +14,9 @@
         icon:icon(a.policy || {}), coin:a.policy?.coin || '',
         funds:`${t('模拟资金')}  ${amount(a.equity)} U`,
         profit:`${t('已结算收益')}  ${profit > 0 ? '+' : ''}${amount(profit)} U`,
+        fundsLabel:t('模拟资金'), fundsValue:`${amount(a.equity)} U`,
+        profitLabel:t('已结算收益'), profitValue:`${profit > 0 ? '+' : ''}${amount(profit)} U`,
+        roundLabel:t('本轮下注'),
         positive:Number.isFinite(profit) && profit >= 0,
         action:direction || t(orders.length ? '等待结算' : '观望'),
         status:t(state), key:JSON.stringify([b.id,a.id]) };
@@ -43,7 +46,7 @@
       // was still available even if the ledger did not change. No polling of prices.
       if (signature !== lastSignature || Date.now() - lastSent >= 25000) {
         if (api.serviceOwned) {
-          const words = ['模拟资金','已结算收益','看涨','看空','观望','等待结算','行情连接中断','等待恢复',...Object.values(statuses)];
+          const words = ['模拟资金','已结算收益','本轮下注','看涨','看空','观望','等待结算','行情连接中断','等待恢复',...Object.values(statuses)];
           await api.configureWidget({ labels:payload.labels, words:Object.fromEntries(words.map(word=>[word,t(word)])),
             names:payload.rows.map(row=>({key:row.key,name:row.name,icon:row.icon})) });
         } else await plugin.update({ snapshot:payload });
@@ -78,13 +81,44 @@
   section.innerHTML = '<h3>桌面小组件</h3><p>在手机桌面上下滑动查看策略战况。系统暂停后台时，显示上次快照。</p><button type="button" class="secondary">添加到桌面</button><p role="status"></p>';
   section.style.cssText = 'border-top:1px solid #d1bce3;margin-top:20px;padding-top:12px';
   const button = section.querySelector('button'); button.style.minHeight = '48px';
+  const pinStatus = section.querySelector('[role=status]');
+  const pinHelp = document.createElement('p'); pinHelp.hidden = true;
+  pinHelp.textContent = '请长按桌面 → 小组件 → 10U 战神'; section.append(pinHelp);
+  let pinAttempt = null, pinTimer;
+  async function checkPin() {
+    const attempt = pinAttempt;
+    if (!attempt) return;
+    try {
+      const result = await plugin.pinStatus();
+      if (pinAttempt !== attempt) return;
+      if (result.count > attempt.countBefore) {
+        pinStatus.textContent = '小组件已添加到桌面'; pinHelp.hidden = true;
+        pinAttempt = null; clearTimeout(pinTimer); return;
+      }
+    } catch { /* Older native builds still get the manual instructions. */ }
+    if (pinAttempt === attempt) {
+      pinStatus.textContent = '尚未确认添加。若没有弹窗，请从桌面手动添加。';
+      pinHelp.hidden = false;
+    }
+  }
+  root.document.addEventListener('visibilitychange', () => {
+    if (!root.document.hidden) void checkPin();
+  });
   button.onclick = async () => {
-    button.disabled = true;
+    button.disabled = true; clearTimeout(pinTimer); pinAttempt = null;
+    pinStatus.textContent = ''; pinHelp.hidden = true;
     try {
       await sync();
       const result = await plugin.pin();
-      section.querySelector('[role=status]').textContent = result.supported ? '请在系统弹窗中添加小组件' : '请长按桌面 → 小组件 → 10U 战神';
-    } catch { section.querySelector('[role=status]').textContent = '请长按桌面 → 小组件 → 10U 战神'; }
+      pinHelp.hidden = false;
+      if (result.supported) {
+        pinStatus.textContent = '请确认系统添加提示；若没有弹窗，可从桌面手动添加。';
+        pinAttempt = { countBefore:result.countBefore };
+        pinTimer = setTimeout(() => void checkPin(), 6000);
+      } else pinStatus.textContent = '当前桌面未接受添加请求，请手动添加。';
+    } catch {
+      pinStatus.textContent = '当前桌面未接受添加请求，请手动添加。'; pinHelp.hidden = false;
+    }
     finally { button.disabled = false; }
   };
   document.querySelector('#battle-settings-dialog')?.append(section);

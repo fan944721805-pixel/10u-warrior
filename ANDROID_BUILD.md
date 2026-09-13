@@ -8,6 +8,20 @@ Android 版独立运行，无需电脑或自建服务器。手机通过 Android 
 
 > 当前产物是由 Android 调试密钥签名的测试 APK，可以侧载安装，但不是正式发布包。对外发布前必须固定包名、生成并妥善保管发布密钥，再生成 release APK/AAB。
 
+## GitHub 试用 Release
+
+0.1.9 的 GitHub 试用 APK 使用非调试的 Release 构建变体，并显式沿用本机已有测试证书，支持同签名旧测试版覆盖安装。它不是使用正式发行证书的商店发布包。测试签名不上传；构建与验签方式依据 [Android 签名说明](https://developer.android.com/studio/publish/app-signing) 和 [apksigner](https://developer.android.com/tools/apksigner)。
+
+```powershell
+npm run check
+npm test
+npm run android:sync
+Set-Location android
+.\gradlew.bat --init-script ..\scripts\trial-release-signing.gradle assembleRelease
+```
+
+输出 `android/app/build/outputs/apk/release/app-release.apk`。测试签名仅在显式传入该 init script 时生效，未改变常规 Release 的签名配置。最简安装和 Web 试用步骤见 [TRY_ME.md](./TRY_ME.md)。
+
 ## 本机快速构建
 
 当前工作区已配置项目内 Android SDK，直接运行：
@@ -76,7 +90,7 @@ npm run android:apk
 | Binance Agentic Wallet | 禁用并显示说明 | 保留现有本机服务流程 |
 | 真实交易 | 禁用 | 仍受现有人工确认和风控限制 |
 
-Android 应用 ID 为 `com.tenuwarrior.app`，版本为 `0.1.7`（versionCode 8），最低系统为 Android 7.0（API 24）。使用同一签名覆盖安装，保留原有数据；不要先卸载旧版。设备需使用仍受支持、已更新的 Android System WebView。发布前如需更换应用 ID，应在第一次对外分发前完成；更换 ID 后，用户设备会将它视为另一个应用。
+Android 应用 ID 为 `com.tenuwarrior.app`，版本为 `0.1.9`（versionCode 10），最低系统为 Android 7.0（API 24）。使用同一签名覆盖安装，保留原有数据；不要先卸载旧版。设备需使用仍受支持、已更新的 Android System WebView。发布前如需更换应用 ID，应在第一次对外分发前完成；更换 ID 后，用户设备会将它视为另一个应用。
 
 ### 桌面策略小组件
 
@@ -86,7 +100,7 @@ Android 应用 ID 为 `com.tenuwarrior.app`，版本为 `0.1.7`（versionCode 8�
 
 小组件由服务订阅同一账本并复用原有投影函数，状态改变时更新，每 25 秒发送展示心跳；页面仅同步当前语言和头像名称，不再承担后台刷新。不另建交易引擎、不发起额外行情请求。Android 私有偏好中仅缓存展示字段，不复制 AI Key、订单详情或加密账本。模拟资金并非钱包资产或实时盯市净值。
 
-界面始终标注快照并显示距上次更新的计时。90 秒未收到心跳后符合过期条件，通过系统非精确定时器刷新为「更新中断」；安卓省电调度可能延迟提示，不能保证后台秒级更新。此时可点击打开应用刷新。进程重启仍沿用原有暂停恢复规则，不会自动补下注。多个小组件共用快照，各自浏览位置独立。
+0.1.9 使用白色策略卡片，并按小组件宽高选择紧凑或宽版布局；移除独立标题栏与计时栏，运行/过期状态保留在卡片内。90 秒未收到心跳后符合过期条件，通过系统非精确定时器刷新过期状态；安卓省电调度可能延迟提示，不能保证后台秒级更新。此时可点击打开应用刷新。进程重启仍沿用原有暂停恢复规则，不会自动补下注。多个小组件共用快照，各自浏览位置独立。
 
 验证：`npm run widget:verify` 检查数据投影；`npm run mobile:verify` 检查含添加入口的四语言响应式界面（模拟原生桥）；设置 `ANDROID_TEST_SERIAL` 为测试模拟器后运行 `node scripts/verify-strategy-widget-native.cjs` 验证真实桌面滑动、暖启动/冷启动详情、模拟补资更新、语言、过期与删除。`StrategyWidgetLayoutTest` 在 Android 上验证最小宽度与放大字体时资金文本完整显示。这些都是模拟账本和 UI 验证，不是实盘交易验证。
 
