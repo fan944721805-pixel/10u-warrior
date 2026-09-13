@@ -2,7 +2,7 @@
 
 移动端优先的 AI 策略模拟对局应用：选择角色、分配虚拟本金，观察决策、结算、收益曲线与战报。使用原生 HTML/CSS/JavaScript 和 Node.js，保留动漫紫、荧光黄及卡通战神风格。
 
-**当前源码版本：0.1.0 · 2026-09-13 功能快照。** 自动对局使用模拟资金，真实交易默认关闭。Node 网页版面向本机单用户；Android 为本地离线模拟。功能更新单独记录在 [CHANGELOG.md](./CHANGELOG.md)。
+**当前版本：Web 包 0.1.0 / Android 0.1.7（versionCode 8）· 2026-09-13 功能快照。** 自动对局使用模拟资金，真实交易默认关闭。Node 网页版面向本机单用户；Android 在手机本地运行并直接联网。功能更新单独记录在 [CHANGELOG.md](./CHANGELOG.md)。
 
 ## 快速开始
 
@@ -20,13 +20,16 @@ npm start
 | 功能 | 当前行为 |
 | --- | --- |
 | 独立战局 | 每局最多 8 位 Agent，独立本金、轮数、策略与模型绑定；确认后开局，支持切换、暂停、结束、归档删除与重置 |
-| 16 种角色策略 | 赌狗、超级AI、守财奴、跟风侠、抄底摸顶王、火箭哥、大单侦探、稳如老狗、六票战神、蜡烛哥、CZ大表哥、逆行者、装逼的人、一姐、风水师、占卜师 |
+| 17 种角色策略 | 10U战神、超级AI、守财奴、凉兮、跟风侠、抄底摸顶王、火箭哥、大单侦探、稳如老狗、六票战神、蜡烛哥、CZ大表哥、逆行者、装逼的人、一姐、风水师、占卜师 |
 | 策略与进场 | 26 项指标/数据选项，角色仓位阶梯、情绪与出手意愿、条件梭哈、开盘/信号进场，以及本轮开盘位置与剩余时间的方向校正；娱乐角色保留明确标识 |
 | 行情与模拟撮合 | BTC/ETH/BNB，5m/15m/1h/1d；实时现货参考价、免连接练习和连接后的预测市场模拟，按原来源结算 |
 | 账本与复盘 | 虚拟本金追加、持仓估值、扣除追加本金后的收益、净值曲线、排行榜、逐轮结算弹窗、原始决策记录与账本对账 |
 | 可选外部模型 | 保存并测试 AI 连接，按本局策略选择模型或本地规则，记录供应商返回的 token 用量；密钥仅保存在本机 |
 | 人工执行桥接 | 从保存的模拟意图获取官方报价，经逐笔确认后单次提交，另存执行记录；默认关闭，模拟记录与真实执行分开 |
-| 多端界面 | 中文、英文、日文、韩文；手机、平板、桌面布局；角色图标、皮肤与紧凑策略选择；Capacitor Android 离线打包工程 |
+| 多端界面 | 中文、英文、日文、韩文；手机、平板、桌面布局；角色图标、皮肤与紧凑策略选择；Capacitor Android 独立联网打包工程 |
+| Android 后台模拟 | 前台服务持有唯一模拟引擎和加密账本，通知栏可暂停新下注；进程重启后恢复为暂停，不补下注 |
+| 桌面策略小组件 | 滑动浏览策略、模拟资金、已结算收益和本轮方向，点击进入详情；支持语言同步、尺寸调整与过期提示 |
+| 模拟流程修复 | 创建请求防重复、逐策略暂停与补资、败北状态与历史战绩；AI 连接异常按错误类型恢复，持续故障暂停相关对局 |
 
 ## 模拟行情与结算
 
@@ -35,7 +38,7 @@ npm start
 - **未连接：公开现货行情练习。** 无需 API Key。使用 Binance Spot 指标；自定义赔率固定为 2 倍，按轮次首根 1m K 线开盘价和末根已收盘 1m K 线收盘价判断涨跌，平局退本金，无模拟手续费。这不是 Binance Prediction 的赔率或结算规则。缺失真实 K 线时等待，不补造价格。
 - **已连接：真实预测市场模拟，空钱包也能玩。** 市场、双向盘口和结算结果均来自 Binance。模拟按卖盘逐档计算份额，扣除基础手续费估算后记账，不调用会检查真实余额的交易报价接口。真实下注复用保存的金额、方向、市场和决策，另取官方报价供逐笔确认；页面同时展示模拟份额与官方预计份额，实际成交以回执为准。
 - **费用口径：** 对 `PREDICT_FUN` 市场读取其 `feeRateBps`，按每档 `费率 × min(价格, 1−价格) × 份额` 计算 USDT 费用，再按该档价格转换为扣除的份额。依据 [Predict 官方费用规则](https://docs.predict.fun/the-basics/predict-fees-and-limits)。不估算账户折扣、返佣或链上费用；未知供应商、费率缺失、盘口过期或深度不足均跳过。模拟估算不等于实际成交保证。
-- **连接变化按轮次生效。** 新轮次重新检查连接；已存在的虚拟订单保留原来源，断开后仍等待其原市场结算，不拿现货结果替代预测市场结果。原生 APK / `?offline=1` 保持明确标识的本地离线演示，不连接钱包。
+- **连接变化按轮次生效。** 新轮次重新检查连接；已存在的虚拟订单保留原来源，断开后仍等待其原市场结算，不拿现货结果替代预测市场结果。原生 APK 直接读取公开行情、调用已配置的 AI，使用手机加密账本；`?offline=1` 保留旧版离线演示。手机版不连接钱包。
 
 新局按创建时选中的 Agent、每位本金和轮次执行；预置 A/B/C 各 100U 的旧入口默认暂停。没有正期望、数据过期或响应不合规时跳过。可选择 BTC、ETH 或 BNB，以及 5 分钟、15 分钟、1 小时或 1 天涨跌；同一局使用同一种币种和周期，错过不补单。竞技场、AI 卡片、战报读取同一份服务端模拟账本。
 
@@ -48,7 +51,7 @@ npm start
 - 每个参与的所选周期节点计一轮；该轮跳过下注也计入轮数。暂停期间不计轮次。
 - 第 10 轮或手动“结束”后立即禁止新下注；有未结算订单则显示“等待最后结算”，不提前退款。所有订单结算后才显示“已结束”，冻结整局战报。
 - 刷新后保持所选战局；结束状态不可恢复，战报不随时钟、策略草案、重复暂停或服务重启改变。
-- 切换战局或新建下一局会暂停上一局。页面离开时发送暂停请求；异常关闭未能送达时，服务端在心跳断开超过 30 秒后的下次检查暂停新下注。已有订单仍按官方结果结算，市场未公布结果时继续等待。
+- Node 网页版切换战局或新建下一局会暂停上一局。页面离开时发送暂停请求；异常关闭未能送达时，服务端在心跳断开超过 30 秒后的下次检查暂停新下注。已有订单仍按原来源结算，结果未公布时继续等待。Android 联网版由后台服务继续运行，页面隐藏不暂停引擎；强制停止、进程重启或覆盖升级后重新打开仍恢复为暂停。
 - 离线版不运行后台计时任务，重新打开总是暂停；到期订单在再次读取时完成本地模拟结算。存储写入失败会停止新下注并报错。
 
 验证：运行 `npm run check` 和 `npm test`，包含隔离账本、时钟和模拟决策测试。`scripts/verify-battle-ui.cjs` 检查实际浏览器表单、十轮加速时钟、策略隔离、刷新、页面离开和服务端暂停请求。`scripts/verify-functional-chain.cjs` 检查本节四项功能的浏览器与 HTTP 完整串联，并覆盖 393/768/1440px 中英文布局。需要已安装 Playwright 和 Chrome，可通过 `PLAYWRIGHT_PATH` 指向现有 Playwright 模块。脚本输出临时证据目录，退出时关闭浏览器及隔离服务；不使用现有 `.data`、真实钱包或真实 AI API，不属于实盘或新版 APK 验证。
@@ -105,7 +108,7 @@ npm test
 
 ## Android APK
 
-Android 版已改为不依赖本项目服务端的本地模拟模式：对局和策略保存在当前设备，不连接钱包，不读取真实资产，不提交真实交易。本机构建测试 APK：
+Android 0.1.7 不依赖本项目服务端：手机直接获取公开行情并调用已配置的 AI，对局与策略保存在设备加密账本中。后台服务持有唯一执行实例，支持运行通知、后台设置引导和桌面策略小组件；仍受系统与厂商省电策略限制。不连接钱包、不读取真实资产、不提交真实交易。本机构建测试 APK：
 
 ```powershell
 npm run android:apk
@@ -216,7 +219,10 @@ npm run dev
 | `ai-decision.js`、`public/strategy-catalog.js`、`round-direction.js` | 策略、模型输入、本地风控与结算方向校正 |
 | `ai-connections.js`、`public/ai-routing.js` | 加密连接、模型绑定与用量记录 |
 | `execution-bridge.js` | 保存意图到逐笔确认执行的独立桥接 |
-| `public/offline-simulation.js`、`android/` | 浏览器离线模拟与 Android 容器 |
+| `public/offline-simulation.js` | 独立保留的浏览器离线演示 |
+| `mobile/`、`scripts/build-mobile.cjs` | 共用模拟引擎的手机适配器与生成包构建 |
+| `public/native-service-client.js`、`public/runtime-host.js`、`public/runtime-scheduler.js` | 页面与原生服务通信、引擎宿主页及原生计时器适配 |
+| `android/`、`public/android-background.js`、`public/strategy-widget.js` | Android 服务、加密存储、后台设置与桌面小组件 |
 | `public/app-core.js` | 页面共享状态与模块事件总线 |
 | `public/simulation-api.js` | 模拟接口的统一请求边界 |
 | `public/skin-registry.js` | 逐 Agent 皮肤注册、校验、持久化和应用 |
@@ -229,10 +235,10 @@ npm run dev
 
 2026-09-13 本次上传前检查：
 
-- `npm run check` 通过，`npm test` **230/230** 通过。
-- `scripts/verify-functional-chain.cjs` 通过：开局确认、原始决策、模拟对账、逐笔确认桥接、结束战报和按需加载；中文/英文、393/768/1440px。外部接口均为测试替身，无真实交易调用。
-- `scripts/verify-direction-ui.cjs` 通过：方向说明的四语言翻译、360/768/1440px 无横向溢出和语言控件触控尺寸。
-- 本次未重新构建 APK、未验证 Android 真机或真实模型连通，也未重启已有服务。前文带日期的真实行情记录是历史证据。
+- `npm run check` 通过，`npm test` **314/314** 通过；测试前重新生成手机运行包。
+- `node scripts/verify-mobile-runtime.cjs` 通过：手机模拟运行、网络失败与恢复、AI 配置保存/重载、旧版离线入口，以及四语言、360/768/1440px 布局；使用原生桥和外部响应替身，不请求电脑 API。
+- `node scripts/verify-liangxi.cjs` 通过：凉兮卡片、头像、仓位展示、保存/重载与策略切换；中文/英文、360/768/1440px。
+- 本次未重新构建 APK、未验证 Android 真机或真实模型连通，也未重启已有服务。浏览器原生桥模拟不等于 Android 后台运行实测；前文带日期的真实行情记录和旧版完整链路验证属于历史证据。
 
 自动化测试使用隔离的 Wallet、指标、订单簿和模型响应，不需要支付资金；覆盖指标计算、DeepSeek 请求契约、响应校验、风控拒绝、节点等待、深度撮合、重复触发、重启恢复、提前结算保护和余额不足。通过测试不代表真实 DeepSeek 连通或真实账户下单已验证。
 
@@ -246,6 +252,6 @@ AI API 设置通过本机服务保存和测试连接，并用于显式绑定模�
 
 ## English quick start
 
-10U Warrior is a local-first strategy simulation with 16 character strategies, up to 8 Agents per battle, isolated paper balances, live market references, decision history, equity charts and round recaps. Chinese, English, Japanese and Korean are supported across phone, tablet and desktop layouts. Android runs a local offline simulation.
+10U Warrior is a local-first strategy simulation with 17 character strategies, including Liang Xi, up to 8 Agents per battle, isolated paper balances, live market references, decision history, equity charts and round recaps. Chinese, English, Japanese and Korean are supported across phone, tablet and desktop layouts. Android 0.1.7 runs one shared simulation engine in a foreground service, fetches live market data and calls configured AI providers directly over HTTPS, and encrypts local records with Android Keystore. It includes a scrollable strategy widget and notification pause controls. Background operation remains subject to Android restrictions; process restarts restore battles paused. It needs no PC or self-hosted server. The legacy offline demo remains available separately.
 
 Use Node.js 22+, run `npm ci`, then `npm start`, and open [the local app](http://127.0.0.1:5174). Run `npm run check` and `npm test` for offline validation. External AI models are optional; live trading is disabled by default and requires a quote → explicit per-order confirmation → single submission workflow. No wallet or API credentials are bundled. See [AI_AGENT_USAGE.md](./AI_AGENT_USAGE.md), [Android build instructions](./ANDROID_BUILD.md), and the [feature changelog](./CHANGELOG.md).
