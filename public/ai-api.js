@@ -4,13 +4,21 @@
   const form = document.querySelector('#api-form');
   if (!dialog || !opener || !form) return;
 
+  const nativeMode = window.Warrior?.simulationApi?.mode === 'native';
+  const appFetch = (...args) => (window.Warrior.request || window.fetch.bind(window))(...args);
+  if (nativeMode) {
+    const note = dialog.querySelector('.api-security-note p');
+    if (note) note.textContent = '密钥加密保存在当前设备，测试和决策时发送给所选服务商。请在此移除不再使用的连接。';
+    const keyNote = form.querySelector('.api-field small');
+    if (keyNote) keyNote.textContent = '加密保存在当前设备';
+  }
   const DB_NAME = 'warrior-ai-api-vault';
   const DB_VERSION = 1;
   const providers = {
     openai: { name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-5-mini', type: 'openai' },
     anthropic: { name: 'Anthropic', baseUrl: 'https://api.anthropic.com/v1', model: 'claude-sonnet-4-6', type: 'anthropic' },
     deepseek: { name: 'DeepSeek', baseUrl: 'https://api.deepseek.com', model: 'deepseek-v4-flash', type: 'compatible' },
-    custom: { name: '自定义', baseUrl: 'http://127.0.0.1:11434/v1', model: '', type: 'compatible' }
+    custom: { name: '自定义', baseUrl: nativeMode ? '' : 'http://127.0.0.1:11434/v1', model: '', type: 'compatible' }
   };
   const keyInput = document.querySelector('#api-key');
   const baseInput = document.querySelector('#api-base-url');
@@ -29,7 +37,7 @@
   const t = value => window.Warrior?.i18n?.t(value) || value;
   async function serverRequest(url, body) {
     if (window.Warrior.simulationApi?.mode === 'offline') throw new Error(t('AI 调用需要本机服务，离线模式仅使用本地规则。'));
-    const response = await fetch(url, { method: body ? 'POST' : 'GET', headers: body ? {'content-type':'application/json'} : {},
+    const response = await appFetch(url, { method: body ? 'POST' : 'GET', headers: body ? {'content-type':'application/json'} : {},
       ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(20000) });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(t(payload.code || 'AI_SERVICE_UNAVAILABLE'));
@@ -40,9 +48,10 @@
   window.Warrior.aiConnections = {
     refresh: () => serverRequest('/api/ai/settings'),
     snapshot: () => serverState,
+    testConnection: (provider, revision) => serverRequest('/api/ai/connections/check', {provider, revision}),
     assign: (strategy, connectionId) => serverRequest('/api/ai/assignments', {strategy, connectionId}),
     async preview(strategy) {
-      const response = await fetch('/api/ai/preview', {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({strategy}),signal:AbortSignal.timeout(20000)});
+      const response = await appFetch('/api/ai/preview', {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({strategy}),signal:AbortSignal.timeout(20000)});
       const result = await response.json();
       if(!response.ok)throw new Error(t(result.code || 'AI_SERVICE_UNAVAILABLE'));
       return result;
@@ -94,6 +103,7 @@
     return key;
   }
   async function encryptSecret(secret) {
+    if (nativeMode) return null;
     const key = await deviceKey();
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const cipher = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(secret));
@@ -105,9 +115,9 @@
     const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: record.secret.iv }, key, record.secret.cipher);
     return new TextDecoder().decode(plain);
   }
-  const getAllConnections = () => useStore('connections', 'readonly', store => request(store.getAll()));
-  const saveConnection = record => useStore('connections', 'readwrite', store => request(store.put(record)));
-  const deleteConnection = provider => useStore('connections', 'readwrite', store => request(store.delete(provider)));
+  const getAllConnections = () => nativeMode ? Promise.resolve([]) : useStore('connections', 'readonly', store => request(store.getAll()));
+  const saveConnection = record => nativeMode ? Promise.resolve() : useStore('connections', 'readwrite', store => request(store.put(record)));
+  const deleteConnection = provider => nativeMode ? Promise.resolve() : useStore('connections', 'readwrite', store => request(store.delete(provider)));
 
   function providerLabel(id) { return providers[id]?.name || id; }
   function resetResult() {
@@ -253,7 +263,7 @@
     document.querySelectorAll('[data-api-provider]').forEach(button => button.disabled = true);
     saveButton.disabled = true;
     testButton.disabled = true;
-    setResult('testing', '正在测试决策…', '本机服务正验证模型的决策 JSON');
+    setResult('testing', '正在测试决策…', nativeMode ? '正在验证模型的决策 JSON' : '本机服务正验证模型的决策 JSON');
     try {
       const existing = connections.get(activeProvider);
       let record;
@@ -347,5 +357,5 @@
       setResult('error', '移除失败', error.message);
     }
   });
-  refreshConnections().catch(error => setResult('error', '本机服务不可用', error.message));
+  refreshConnections().catch(error => setResult('error', nativeMode ? '当前服务不可用' : '本机服务不可用', error.message));
 })();

@@ -5,7 +5,23 @@
   const offline = api.mode === 'offline';
   const number = value => Number(value ?? 0).toFixed(2);
   const localize = value => window.Warrior?.i18n?.t?.(value) || value;
-  const statusLabels = { running: '进行中', paused: '已暂停', settling: '等待最后结算', ended: '已结束', reconnecting: '连接恢复中', 'retry-paused': '重试已暂停' };
+  const waitingLabels={AI_STAKE_BELOW_MINIMUM:'下注金额低于最低 5U',AI_REASON_CONTRADICTS_INPUT:'AI 观望理由与输入不符',WAIT_CZ_BET:'等待 CZ 下注',WAIT_BULL_TREND:'上涨确认不足',WAIT_PEER_BET:'等待符合条件的对手下注',WAIT_ORACLE_SIGNAL:'牌面与行情尚未形成方向',WAIT_ENTRY_SIGNAL:'等待进场信号',AI_REVIEW_COOLDOWN:'已分析，等待下次复查',AI_WAIT_MARKET_CHANGE:'已分析，等待行情变化',AI_REVIEW_LIMIT:'本轮分析次数已用完',AI_INDICATOR_MISSING:'等待完整行情',AI_EDGE_NOT_POSITIVE:'赔率优势不足',AI_EDGE_LOST_TO_SLIPPAGE:'最新赔率优势不足',AI_STAKE_OVER_CAP:'下注金额超过限制',AI_STAKE_INVALID:'AI 金额格式不正确',AI_PROBE_STAKE_OVER_CAP:'试探下注超过小额限制',AI_STRATEGY_CONDITION_NOT_MET:'策略条件尚未满足',AI_CONFIDENCE_TOO_LOW:'判断把握不足',AI_REQUEST_FAILED:'AI 请求失败',AI_REQUEST_TIMEOUT:'AI 请求超时'};
+  function waitingLabel(agent,currentDecision,data){
+    if(data.recovery)return '行情恢复中';
+    if(!data.enabled)return '已暂停';
+    if(agent.waitReason==='WAIT_CZ_BET')return waitingLabels.WAIT_CZ_BET;
+    if(currentDecision&&agent.lastDecision.action==='SKIP')return agent.lastDecision.engine?.simulated?'策略选择观望':'AI 选择观望';
+    if(currentDecision&&agent.lastDecision.action==='REJECTED')return waitingLabels[agent.lastDecision.reason]||'风控未通过';
+    return waitingLabels[agent.waitReason]||waitingLabels[agent.reason]||'等待 AI 决策';
+  }
+  const aiOutageMessage = '多个 AI 决策连接失败，全部对局已暂停。请检查网络或代理，恢复连接后手动继续。';
+  const seenAiOutages = new Set();
+  function notifyAiOutage(failure) {
+    if (!failure?.id || seenAiOutages.has(failure.id)) return;
+    seenAiOutages.add(failure.id);
+    window.alert(localize(aiOutageMessage));
+  }
+  const statusLabels = { running: '进行中', paused: '已暂停', settling: '等待最后结算', ended: '已结束', reconnecting: '连接恢复中', 'retry-paused': '重试已暂停', 'awaiting-settlement': '等待平台结算' };
   const orderLabels = { WATCHING: '等待信号', WAITING: '等待节点', QUOTING: '读取赔率', OPEN: '已下注', SKIPPED: '本轮跳过', PAUSED: '已暂停', INSUFFICIENT_FUNDS: '余额不足', WON: '已结算 · 赢', LOST: '已结算 · 输', SPLIT: '平局 · 按份额结算', CANCELLED: '已取消' };
   const periods = {'5m':{ms:300000,label:'5分钟'},'15m':{ms:900000,label:'15分钟'},'1h':{ms:3600000,label:'1小时'},'1d':{ms:86400000,label:'1天'}};
   const periodFor = value => periods[value] || periods['5m'];
@@ -42,11 +58,6 @@
   const bar = $('#simulation-commandbar');
   bar.innerHTML = '<section class="sim-battles"><form id="sim-create"><button type="submit" class="launch-battle"><span class="launch-battle-mark" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M13.5 3 5 13h6l-1 8 9-11h-6z"/></svg></span><span>开一局</span><span class="launch-battle-bang" aria-hidden="true" data-no-translate>!</span></button></form><span id="sim-action-error" role="status"></span></section><section class="paper-panel"><strong id="sim-asset"></strong><span id="sim-source"></span><span id="sim-market"></span><span id="sim-next" data-no-translate></span><button type="button" id="sim-strategy-lab">AI 策略设置</button><small id="sim-ai-mode"></small><span id="sim-error" role="status"></span></section>';
   $('#sim-source').textContent = offline ? '本地模拟行情 · 规则 AI · 离线演示' : '真实指标与订单簿 · AI 决策 · 模拟成交';
-  const sourceNotice = node('details', '', 'simulation-source-notice');
-  sourceNotice.id = 'simulation-source-notice';
-  const sourceTitle = node('summary', '模拟仓 · 无需连接即可开局');
-  const sourceDescription = node('p', '');
-  sourceNotice.append(sourceTitle, sourceDescription); bar.after(sourceNotice);
   const quoteNote = order => offline ? '离线模拟估算 · 非保证收益'
     : order.marketSource === 'public-spot' ? '自定义模拟：获胜返还 2 倍，平局退本金'
     : order.quote?.source === 'official-quote' ? '官方报价预估份额 · 含服务费 · 不含链上费用'
@@ -55,20 +66,12 @@
   window.Warrior.on('betting-mode:change', () => { if (current) { renderSource(current); renderCards(current); } });
   window.Warrior.on('live-participation:change', () => { if (current) renderCards(current); });
   function renderSource(data) {
-    sourceNotice.dataset.source = offline ? 'offline' : data.marketSource || 'unknown';
-    sourceTitle.textContent = offline ? '本地模拟行情 · 规则 AI · 离线演示'
+    const sourceLabel = offline ? '本地模拟行情 · 规则 AI · 离线演示'
       : data.marketSource === 'public-spot' ? '免连接模拟 · 公开行情'
       : data.marketSource === 'binance-prediction' ? (window.Warrior.state.bettingMode === 'live' ? '真实下注 · 共用市场与决策' : '真实市场模拟 · 不提交订单')
       : '模拟仓 · 无需连接即可开局';
-    sourceDescription.textContent = offline ? '模拟数据仅保存在当前设备'
-      : data.marketSource === 'public-spot'
-        ? '虚拟本金；按本轮现货开盘与收盘判断涨跌，获胜返还 2 倍，平局退本金。连接钱包后从下一轮跟随真实预测市场。'
-        : '空钱包也能模拟；按真实盘口和基础手续费估算成交，跟随官方结果结算。真实下注沿用同一决策，另行核对报价。连接变化从下一轮生效。';
-    if (data.error) sourceDescription.textContent = data.marketSource === 'public-spot'
-      ? '公开行情暂不可用，等待恢复后继续；不会使用虚构价格结算。'
-      : '真实市场或钱包暂不可用，等待恢复；已有订单不会切换为模拟行情结算。';
-    $('#active-market').textContent = data.marketSource === 'public-spot' ? '公开行情模拟' : offline ? '离线演示' : 'Binance Prediction';
-    $('#sim-source').textContent = sourceTitle.textContent;
+    $('#active-market').textContent = localize(data.marketSource === 'public-spot' ? '公开行情模拟' : offline ? '离线演示' : 'Binance Prediction');
+    $('#sim-source').textContent = sourceLabel;
   }
   let selected = 'default', current = null, battles = [], busy = false, revision = 0, dialogMode = 'create', reportExpanded = false;
   let refreshQueued = false, refreshController = null, reportSnapshot = null;
@@ -104,7 +107,9 @@
       ? '平台尚未提供有效结算结果，订单与本金已保留。' : recovery.kind === 'network'
       ? '无法连接市场服务，请检查网络或代理。' : '市场报价暂不可用，订单与本金已保留。';
     const progress = recoveryPanel.querySelector('.recovery-progress');
-    progress.replaceChildren(node('span', '自动重试'), node('b', ` ${recovery.attempts}/${recovery.maxAttempts} `, '', true));
+    progress.replaceChildren(...(recovery.kind === 'settlement'
+      ? [node('span', '每 30 秒查询结算，不占用故障重试次数。')]
+      : [node('span', '自动重试'), node('b', ` ${recovery.attempts}/${recovery.maxAttempts} `, '', true)]));
     if (recovery.status === 'exhausted') progress.append(node('span', '已达上限，请手动重试。'));
     else progress.append(node('span', '下次重试'), node('b', ` ${Math.max(0,Math.ceil((recovery.nextRetryAt-Date.now()-clockOffset)/1000))} s`, '', true));
     recoveryPanel.querySelector('.recovery-resume').textContent = !current.enabled || terminal(current)
@@ -154,6 +159,33 @@
   let emotionSaving = false, actionUrgeSaving = false, realtimeEntrySaving = false;
   const emotionControl = $('#battle-emotion-control'), emotionSlider = $('#battle-emotion'), emotionValue = $('#battle-emotion-value');
   const actionUrgeControl = $('#battle-action-urge-control'), actionUrgeSlider = $('#battle-action-urge'), actionUrgeValue = $('#battle-action-urge-value');
+  function addBattleStepper(slider, decreaseLabel, increaseLabel) {
+    const row=node('div','','battle-range-row');
+    const decrease=node('button','−','battle-range-step'), increase=node('button','+','battle-range-step');
+    for (const [button,label,direction] of [[decrease,decreaseLabel,-1],[increase,increaseLabel,1]]) {
+      button.type='button';button.setAttribute('aria-label',label);button.setAttribute('aria-controls',slider.id);
+      button.addEventListener('click',()=>{
+        if(slider.disabled)return;
+        const previous=slider.value;
+        if(direction<0)slider.stepDown();else slider.stepUp();
+        if(slider.value===previous)return;
+        slider.dispatchEvent(new Event('input',{bubbles:true}));
+        slider.dispatchEvent(new Event('change',{bubbles:true}));
+        sync();
+      });
+    }
+    slider.before(row);row.append(decrease,slider,increase);
+    function sync() {
+      const value=Number(slider.value),min=Number(slider.min),max=Number(slider.max);
+      decrease.disabled=slider.disabled||value<=min;increase.disabled=slider.disabled||value>=max;
+      slider.style.setProperty('--range-progress',`${(value-min)/(max-min)*100}%`);
+    }
+    slider.addEventListener('input',sync);
+    new MutationObserver(sync).observe(slider,{attributes:true,attributeFilter:['disabled']});
+    sync();return sync;
+  }
+  const syncEmotionStepper=addBattleStepper(emotionSlider,'降低全场上头值','提高全场上头值');
+  const syncActionUrgeStepper=addBattleStepper(actionUrgeSlider,'降低全场手痒值','提高全场手痒值');
   const settingsDialog=node('dialog','','battle-settings-dialog');
   settingsDialog.id='battle-settings-dialog';
   settingsDialog.setAttribute('aria-labelledby','battle-settings-title');
@@ -164,7 +196,9 @@
   const settingsTrigger=node('button','','battle-settings-trigger');settingsTrigger.type='button';settingsTrigger.id='battle-settings-open';
   settingsTrigger.setAttribute('aria-label','战局设置');settingsTrigger.setAttribute('aria-haspopup','dialog');settingsTrigger.setAttribute('aria-controls',settingsDialog.id);
   settingsTrigger.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 3-.5 3-2 1.2L3.7 6.1l-3 5.2L3 13.2v2.3L.7 17.3l3 5.2 2.8-1.1 2 1.2.5 3h6l.5-3 2-1.2 2.8 1.1 3-5.2-2.3-1.8v-2.3l2.3-1.9-3-5.2-2.8 1.1-2-1.2L15 3Z" transform="translate(2 0) scale(.83)"/><circle cx="12" cy="12" r="3"/></svg>';
-  const battleControls=$('.performance .battle-controls');battleControls.before(settingsTrigger);
+  const battleControls=$('.performance .battle-controls');
+  const quickControls=node('div','','battle-controls battle-quick-controls');
+  battleControls.before(quickControls);quickControls.append($('#pause'),settingsTrigger);
   for(const [id,label] of [['pause','暂停'],['end','停止'],['sim-reset','重置']]) {
     $('#'+id).type='button';$('#'+id).append(node('span',label,'battle-action-label'));
   }
@@ -258,7 +292,7 @@
       finally { priceFallbackBusy = false; if (streamStatus !== 'live') schedulePriceFallback(5000); }
     }, wait);
   }
-  const priceStream = offline ? null : window.Warrior.createPriceStream({
+  const priceStream = offline ? null : (api.createPriceStream || window.Warrior.createPriceStream)({
     onUpdate: quote => { if (quote.symbol === priceSymbol) { clearPriceFallback(); priceQuote = { ...quote, transport: 'websocket' }; streamStatus = 'live'; renderPrice(); } },
     onStatus: status => {
       if (status === 'live') streamStatus = status;
@@ -305,7 +339,7 @@
   const terminal = data => data?.placeholder || ['settling', 'ended'].includes(data?.status);
   function renderBattleSwitcher() {
     const visible = numberedBattles();
-    const text = visible.some(battle => ['running', 'paused', 'settling', 'reconnecting', 'retry-paused'].includes(battle.status)) ? '再开一局' : '开一局';
+    const text = visible.some(battle => ['running', 'paused', 'settling', 'reconnecting', 'retry-paused', 'awaiting-settlement'].includes(battle.status)) ? '再开一局' : '开一局';
     if (launchLabelSource !== text) { launchLabelSource = text; launchLabel.textContent = text; }
     battleSwitcher.hidden = visible.length < 2;
     for (const [id, entry] of battleButtons) {
@@ -344,6 +378,7 @@
     if(document.activeElement!==emotionSlider&&!emotionSaving)emotionSlider.value=String(saved);
     showEmotionLevel(document.activeElement===emotionSlider?emotionSlider.value:saved);
     emotionSlider.disabled=!data||terminal(data)||emotionSaving;
+    syncEmotionStepper();
   }
   emotionSlider.addEventListener('input',()=>showEmotionLevel(emotionSlider.value));
   emotionSlider.addEventListener('change',async()=>{
@@ -352,8 +387,9 @@
     emotionSaving=true;revision++;emotionSlider.disabled=true;
     try{
       const data=await api.setEmotion(target,emotionLevel);
-      if(selected===target)render(data);
+      if(selected===target){render(data);settingsFeedback.dataset.status='saved';settingsFeedback.textContent='已保存；下次分析使用新值，实时进场开启时将在冷却后复查';}
     }catch{
+      settingsFeedback.dataset.status='error';
       settingsFeedback.textContent='上头值保存失败，请刷新后重试';
       syncEmotionControl(current);
     }finally{
@@ -372,6 +408,7 @@
     if(document.activeElement!==actionUrgeSlider&&!actionUrgeSaving)actionUrgeSlider.value=String(saved);
     showActionUrgeLevel(document.activeElement===actionUrgeSlider?actionUrgeSlider.value:saved);
     actionUrgeSlider.disabled=!data||terminal(data)||actionUrgeSaving;
+    syncActionUrgeStepper();
   }
   actionUrgeSlider.addEventListener('input',()=>showActionUrgeLevel(actionUrgeSlider.value));
   actionUrgeSlider.addEventListener('change',async()=>{
@@ -380,8 +417,9 @@
     actionUrgeSaving=true;revision++;actionUrgeSlider.disabled=true;
     try{
       const data=await api.setActionUrge(target,actionUrgeLevel);
-      if(selected===target)render(data);
+      if(selected===target){render(data);settingsFeedback.dataset.status='saved';settingsFeedback.textContent='已保存；下次分析使用新值，实时进场开启时将在冷却后复查';}
     }catch{
+      settingsFeedback.dataset.status='error';
       settingsFeedback.textContent='手痒值保存失败，请刷新后重试';
       syncActionUrgeControl(current);
     }finally{
@@ -395,7 +433,7 @@
     const supported = !offline && typeof data?.config?.realtimeEntry === 'boolean';
     entryToggle.disabled = !supported || terminal(data) || realtimeEntrySaving;
     const message = offline ? '离线演示不支持实时进场。' : !supported ? '实时进场需要重启本机服务后使用。'
-      : '开启：轮内有新信号才请 AI 判断。关闭：仅在开局判断。';
+      : '开启：开局先分析，行情变化后再复查。关闭：仅在开局判断。';
     if (entryHint.dataset.source !== message) { entryHint.dataset.source=message;entryHint.textContent=message; }
   }
   entryToggle.addEventListener('change', async () => {
@@ -406,7 +444,7 @@
       const data=await api.setRealtimeEntry(target,enabled);
       if(selected===target)render(data);
     } catch {
-      settingsFeedback.textContent='实时进场设置未确认，请刷新核对后重试。';
+      settingsFeedback.dataset.status='error';settingsFeedback.textContent='实时进场设置未确认，请刷新核对后重试。';
     } finally {
       realtimeEntrySaving=false;syncRealtimeEntry(current);
       // A lost HTTP response is not proof that the setting was rejected.
@@ -416,6 +454,49 @@
   const createEntryToggle=$('#create-realtime-entry');
   if(offline) { createEntryToggle.disabled=true;$('#create-realtime-entry-hint').textContent='离线演示不支持实时进场。'; }
   let pendingCreation = null;
+  const pendingCreationKey = `warrior-pending-creation-${api.mode}`;
+  let unconfirmedCreation = null;
+  try { unconfirmedCreation = JSON.parse(localStorage.getItem(pendingCreationKey) || 'null'); } catch {}
+  const pendingPanel = node('section', '', 'simulation-repair-panel'); pendingPanel.id = 'pending-creation-panel';
+  const pendingHint = node('p', '上次开局尚未确认，请先核对，避免重复开局。');
+  const pendingRetry = node('button', '核对并重试上次开局', 'secondary'); pendingRetry.type = 'button';
+  pendingPanel.append(pendingHint, pendingRetry); bar.after(pendingPanel);
+  function syncPendingCreation() { pendingPanel.hidden = !unconfirmedCreation; }
+  syncPendingCreation();
+  const storagePanel = node('section', '', 'simulation-repair-panel'); storagePanel.id = 'offline-storage-panel'; storagePanel.hidden = true;
+  const storageHint = node('p', '离线存档读取失败，原始数据已保留。请重试读取、恢复备份或确认重置。');
+  storageHint.setAttribute('role', 'alert');
+  const storageActions = node('div', '', 'simulation-repair-actions');
+  const storageRetry = node('button', '重试读取', 'secondary'), storageBackup = node('button', '恢复最近备份', 'secondary'), storageReset = node('button', '重置离线存档', 'secondary');
+  for (const button of [storageRetry, storageBackup, storageReset]) button.type = 'button';
+  storageActions.append(storageRetry, storageBackup, storageReset); storagePanel.append(storageHint, storageActions); bar.after(storagePanel);
+  const storageDialog = node('dialog', '', 'storage-recovery-dialog'); storageDialog.id = 'storage-recovery-dialog';
+  const storageConfirm = node('button', '确认重置', 'primary'), storageCancel = node('button', '取消', 'secondary');
+  storageConfirm.type = storageCancel.type = 'button';
+  storageDialog.append(node('h2', '重置离线存档'), node('p', '重置后从空白开始，原始损坏存档会另存保留。'), storageConfirm, storageCancel);
+  document.body.append(storageDialog);
+  let storageRepairing = false;
+  function renderStorageIssue() {
+    const issue = api.storageStatus?.(); storagePanel.hidden = !issue;
+    $('#sim-create button').disabled = Boolean(issue);
+    storageBackup.disabled = storageRepairing || !issue?.backupAvailable;
+    storageRetry.disabled = storageReset.disabled = storageRepairing;
+  }
+  async function repairStorage(action) {
+    if (storageRepairing) return;
+    storageRepairing = true; storageConfirm.disabled = storageCancel.disabled = true; renderStorageIssue();
+    try {
+      const result = await api.recoverStorage(action);
+      if (result.storageIssue) throw new Error('OFFLINE_STORAGE_INVALID');
+      choose(result.id); render(result); storageDialog.close(); await refresh({ force: true });
+    } catch { storageHint.textContent = '恢复未完成，原始存档未丢弃。请检查设备存储后重试。'; storageDialog.close(); }
+    finally { storageRepairing = false; storageConfirm.disabled = storageCancel.disabled = false; renderStorageIssue(); }
+  }
+  storageRetry.onclick = () => repairStorage('retry');
+  storageBackup.onclick = () => repairStorage('backup');
+  storageReset.onclick = () => storageDialog.showModal();
+  storageConfirm.onclick = () => repairStorage('reset'); storageCancel.onclick = () => storageDialog.close();
+  storageDialog.addEventListener('cancel', event => { if (storageRepairing) event.preventDefault(); });
   const confirmation = node('dialog', '');
   confirmation.id = 'create-confirm-dialog';
   const confirmationContent = node('div', '', 'creation-review');
@@ -437,6 +518,8 @@
     try { localStorage.setItem('warrior-selected-battle', id); } catch {}
   }
   function openCreate() {
+    if (api.storageStatus?.()) { $('#offline-storage-panel')?.scrollIntoView({ block: 'center' }); return; }
+    if (unconfirmedCreation) { syncPendingCreation(); pendingRetry.focus(); return; }
     dialogMode = 'create';
     $('#create-dialog').dataset.mode = 'create';
     $('#create-dialog h2').textContent = '开一局';
@@ -447,7 +530,7 @@
   }
   $('#sim-create').onsubmit = event => { event.preventDefault(); openCreate(); };
   const deleteButton = node('button', '删除当前战局', 'delete-battle-button'); deleteButton.type = 'button';
-  settingsDialog.append(deleteButton);
+  battleControls.append(deleteButton);
   const deleteDialog = node('dialog', '', 'delete-battle-dialog'); deleteDialog.id = 'delete-battle-dialog';
   deleteDialog.setAttribute('aria-labelledby', 'delete-battle-title');
   const deleteTitle = node('h2', '删除当前战局？'); deleteTitle.id = 'delete-battle-title';
@@ -506,6 +589,7 @@
   $('#sim-strategy-lab').remove();
   $('#create-form').onsubmit = async event => {
     event.preventDefault();
+    if (unconfirmedCreation) { pendingCreation = structuredClone(unconfirmedCreation); confirmation.showModal(); return; }
     if (dialogMode === 'strategy') { $('#create-dialog').close(); return; }
     if (!$('#agent-editor').hidden) {
       $('#form-error').textContent = '请先保存或取消 Agent 设置。';
@@ -519,10 +603,10 @@
     if (agents.length > 8) { $('#form-error').textContent = '每局最多选择 8 位 AI。'; return; }
     if(agents.some(a=>!window.WarriorStrategyCatalog.supportsAsset(a.strategy,a.coin))){$('#form-error').textContent='CZ大表哥和一姐只支持 BTC / BNB，请切换币种或取消选择。';return;}
     const initialBalance = Number($('#budget').value);
-    if (!Number.isFinite(initialBalance) || initialBalance < 1 || initialBalance > 1000) { $('#form-error').textContent = '请输入有效本金。'; return; }
+    if (!Number.isFinite(initialBalance) || initialBalance < 10 || initialBalance > 1000) { $('#form-error').textContent = '每位本金需为 10–1,000 U。'; return; }
     const choice = $('#rounds .selected').dataset.rounds;
     const config = { initialBalance, rounds: choice === 'until-loss' ? choice : Number(choice), period: battlePeriod, agents, realtimeEntry: !offline && createEntryToggle.checked };
-    pendingCreation = structuredClone({ name: sequenceLabel(numberedBattles().length + 1), config });
+    pendingCreation = structuredClone({ name: sequenceLabel(numberedBattles().length + 1), config, requestId: crypto.randomUUID() });
     const selectedPeriod = periodFor(battlePeriod);
     const firstSlot = nextPeriodSlot(Date.now(), selectedPeriod);
     confirmationContent.replaceChildren();
@@ -533,7 +617,7 @@
       ['每位本金', number(initialBalance) + ' U'],
       ['总预算', number(initialBalance * agents.length) + ' U'],
       ['轮次', choice === 'until-loss' ? '亏完为止' : choice],
-      ['实时进场', localize(config.realtimeEntry ? '有新信号才请 AI 判断' : '仅在开局判断')],
+      ['实时进场', localize(config.realtimeEntry ? '开局先分析，行情变化后再复查' : '仅在开局判断')],
       ['预计最后一轮到期', choice === 'until-loss' ? '不设固定时间' : new Date(addPeriods(firstSlot,Number(choice),selectedPeriod)).toLocaleString()],
     ]) {
       const row = node('p', '');
@@ -544,27 +628,40 @@
     confirmationError.textContent = '';
     confirmation.showModal();
   };
-  confirmCreate.onclick = async () => {
-    if (!pendingCreation || confirmCreate.disabled) return;
-    const draft = structuredClone(pendingCreation);
+  async function submitCreation(creation) {
+    if (!creation || confirmCreate.disabled) return;
+    const draft = structuredClone(creation);
     const button = confirmCreate;
     button.disabled = true;
+    pendingRetry.disabled = true;
     backToConfig.disabled = true;
     revision++;
     try {
+      // Persist before sending. A lost response or page reload reuses the same ID and payload.
+      localStorage.setItem(pendingCreationKey, JSON.stringify(draft));
+      unconfirmedCreation = draft; syncPendingCreation();
       if (offline && current?.enabled) await api.setEnabled(current.id, false);
-      const battle = await api.create(draft.name, draft.config);
+      const battle = await api.create(draft.name, draft.config, draft.requestId);
+      localStorage.removeItem(pendingCreationKey);
+      unconfirmedCreation = null; syncPendingCreation();
       choose(battle.id);
-      battles.push(battle);
+      if (!battles.some(item => item.id === battle.id)) battles.push(battle);
       render(battle);
       confirmation.close();
       $('#create-dialog').close();
       page('overview');
       await refresh();
     } catch (error) {
-      confirmationError.textContent = error.code === 'STRATEGY_SERVICE_UPGRADE_REQUIRED' ? error.message : '操作失败，请刷新核对后重试';
-    } finally { button.disabled = false; backToConfig.disabled = false; if (refreshQueued) void refresh(); }
-  };
+      // A definitive validation failure did not create a battle; an uncertain transport failure keeps its ID.
+      if (['INVALID_BATTLE_BUDGET','AI_CONNECTION_NOT_TESTED','AI_CONFIGURATION_CHANGED','STRATEGY_SERVICE_UPGRADE_REQUIRED','BATTLE_CREATION_RETIRED'].includes(error.code) || error.status === 400) {
+        localStorage.removeItem(pendingCreationKey); unconfirmedCreation = null; syncPendingCreation();
+      }
+      const message = error.code === 'STRATEGY_SERVICE_UPGRADE_REQUIRED' ? error.message : '开局未确认，请核对后重试；不会重复创建同一局。';
+      confirmationError.textContent = message; pendingHint.textContent = message;
+    } finally { button.disabled = false; pendingRetry.disabled = false; backToConfig.disabled = false; if (refreshQueued) void refresh(); }
+  }
+  confirmCreate.onclick = () => submitCreation(pendingCreation);
+  pendingRetry.onclick = () => submitCreation(unconfirmedCreation);
   function renderBoard(rows) {
     const root = $('#board-results');
     if (!rows.length) {
@@ -763,7 +860,7 @@
       const title = node('summary', '');
       title.append(node('span', '轮次'), node('strong', ' ' + (grouped.size - index) + ' · ' + new Date(Number(roundId)).toLocaleString(), '', true));
       group.append(title);
-      const eventLabels = { ROUND_STARTED: '轮次开始', MARKET_PREP_FAILED: '市场准备失败', MARKET_SNAPSHOT: '指标与原始盘口', DECISION_INPUT: '送入 AI 的完整输入', MODEL_RESPONSE: 'AI 原始响应', DECISION: '风控结果', ORDER_INTENT: '下注意图', PAPER_ORDER: '模拟扣款', SETTLEMENT_EVIDENCE: '官方结算原始凭据', SETTLEMENT: '结算凭据与余额变化', INPUT_FAILED: '输入不可用', ROUND_SKIPPED: '本轮跳过' };
+      const eventLabels = { ROUND_STARTED: '轮次开始', MARKET_PREP_FAILED: '市场准备失败', MARKET_SNAPSHOT: '指标与原始盘口', DECISION_INPUT: '送入 AI 的完整输入', MODEL_REQUEST: '实际发送的模型请求', MODEL_RESPONSE: 'AI 原始响应', DECISION: '风控结果', ORDER_INTENT: '下注意图', PAPER_ORDER: '模拟扣款', SETTLEMENT_EVIDENCE: '官方结算原始凭据', SETTLEMENT: '结算凭据与余额变化', INPUT_FAILED: '输入不可用', ROUND_SKIPPED: '本轮跳过' };
       for (const event of events) group.append(details(eventLabels[event.type] || event.type, event, 'event-' + event.id));
       history.append(group);
     });
@@ -920,7 +1017,7 @@
         liveButton = node('button', '核对并确认真实下注', 'secondary agent-live-intent');
         liveButton.type = 'button'; card.append(liveButton);
       }
-      const eligibleIntent = order?.intent && order.marketSource !== 'public-spot' ? order.intent : null;
+      const eligibleIntent = order?.intent && !order.intent.simulationOnly && order.marketSource !== 'public-spot' ? order.intent : null;
       liveButton.hidden = !eligibleIntent;
       liveButton.disabled = !eligibleIntent || !data.enabled || Boolean(data.recovery) || observedAt >= eligibleIntent.expiresAt ||
         window.Warrior.liveParticipation?.isIncluded(data.id, agent.id) !== true;
@@ -937,7 +1034,7 @@
       bet.replaceChildren();
       if (openOrders.length > 1) bet.append(node('span', '待结算下注'), node('strong', number(pending.currentAmount) + ' U', '', true));
       else if (order) bet.append(node('span', order.direction === 'UP' ? '看涨' : '看跌', 'agent-direction ' + (order.direction === 'UP' ? 'is-up' : 'is-down')), node('strong', number(order.amount) + ' U', '', true));
-      else bet.append(node('span', agent.lastStatus === 'WATCHING' ? '等待进场信号' : currentDecision ? '本轮不下注' : '等待 AI 决策', 'agent-waiting'));
+      else { const label=node('span',waitingLabel(agent,currentDecision,data),'agent-waiting');label.title=localize(waitingLabels[agent.waitReason]||agent.lastDecision?.reason||agent.reason||'');bet.append(label); }
       let reference = card.querySelector('.agent-entry-price');
       if (!reference) { reference = node('div', '', 'agent-entry-price'); bet.after(reference); }
       reference.replaceChildren(); reference.hidden = !order;
@@ -952,6 +1049,7 @@
       previous.title='已到期，等待市场结算结果';
       card.querySelector('.agent-state').textContent = order ? '待结算' : data.recovery ? statusLabels[data.status] : terminal(data) ? statusLabels[data.status] : !data.enabled ? '已暂停' : agent.lastStatus === 'WATCHING' ? '等待信号' : agent.lastStatus === 'SKIPPED' && currentDecision ? '本轮跳过' : '等待节点';
       card.querySelector('.agent-win').replaceChildren(node('span', '胜率'), node('b', ' ' + (agent.winRate == null ? '—' : number(agent.winRate * 100) + '%'), '', true), node('small', ' ' + agent.wins + '/' + (agent.wins + agent.losses), '', true));
+      window.WarriorDefeat.updateCard(card, data, agent);
     });
   }
   function clocks() {
@@ -970,6 +1068,7 @@
     $('#sim-next').textContent = text; $('#settle-countdown').textContent = text;
   }
   function render(data, options = {}) {
+    renderStorageIssue();
     const full = options.full ?? (offline || (data.view !== 'live' && data.view !== 'summary'));
     if (full) reportSnapshot = data;
     else if (reportSnapshot?.id === data.id && reportSnapshot.stateVersion !== data.stateVersion) reportSnapshot = null;
@@ -1001,11 +1100,12 @@
     $('#collision-rate').textContent = data.diversity?.collisionRate==null?'—':number(data.diversity.collisionRate*100)+'%';
     $('.collision-meter').dataset.level=data.diversity?.collisionRate==null?'empty':data.diversity.collisionRate>=.7?'high':data.diversity.collisionRate>=.4?'mid':'low';
     $('#active-assets').textContent = [...new Set(data.agents.map(agent => agent.policy.coin))].join(' / ');
-    $('#sim-asset').textContent = `${$('#active-assets').textContent} · ${periodFor(data.config?.period).label}`;
+    $('#sim-asset').textContent = [$('#active-assets').textContent, localize(periodFor(data.config?.period).label)].filter(Boolean).join(' · ');
     $('#sim-market').textContent = data.endReason === 'CLIENT_DISCONNECTED' ? '页面已离开，请点击继续。' : terminal(data) ? statusLabels[data.status] : '等待节点';
     // Technical errors stay in the backend snapshot/audit trail, not the command bar.
     // Keep actionable lifecycle and user-operation feedback separate from diagnostics.
-    $('#sim-error').textContent = data.endReason === 'SERVER_RESTARTED' ? '服务器已重启，请手动继续本局' : data.endReason === 'SIMULATION_ERROR' ? '模拟运行异常，已暂停，请检查后继续' : '';
+    $('#sim-error').textContent = data.aiConnectionFailure ? aiOutageMessage : data.endReason === 'SERVER_RESTARTED' ? '服务器已重启，请手动继续本局' : data.endReason === 'SIMULATION_ERROR' ? '模拟运行异常，已暂停，请检查后继续' : '';
+    notifyAiOutage(data.aiConnectionFailure);
     const engine = data.decisionEngine || {};
     $('#sim-ai-mode').textContent = engine.mode === 'offline' ? '规则 AI · 数据仅保存在本机' : engine.mode === 'mock' ? '本地模拟 AI · 未调用 DeepSeek' : engine.mode === 'off' ? 'AI 决策已关闭' : engine.mode === 'deepseek' ? 'DeepSeek 已启用 · 仅模拟下注' : '旧版规则模拟 · 未调用 AI';
     window.Warrior.setState({ simulation: data }, 'simulation:update');
@@ -1047,6 +1147,7 @@
       if (listResult.status === 'fulfilled') {
         const list = listResult.value;
         battles = list.battles;
+        for (const battle of battles) notifyAiOutage(battle.aiConnectionFailure);
         if (!battles.length) { renderBattleSwitcher(); return; }
         if (!battles.some(battle => battle.id === selected)) {
           choose(battles.at(-1).id); refreshQueued = true; return;
@@ -1082,7 +1183,7 @@
     try {
       const data = await action(target);
       if (selected === target) render(data);
-    } catch { (settingsDialog.open ? settingsFeedback : $('#sim-error')).textContent = '操作失败，请刷新核对后重试'; }
+    } catch { settingsFeedback.dataset.status='error';(settingsDialog.open ? settingsFeedback : $('#sim-error')).textContent = '操作失败，请刷新核对后重试'; }
     finally {
       $('#pause').disabled = terminal(current); $('#end').disabled = terminal(current); $('#confirm-end').disabled = false;
       if (refreshQueued) void refresh();
@@ -1106,17 +1207,30 @@
   actionUrgeSlider.disabled = true; showActionUrgeLevel(0);
   window.Warrior.on('page:change', () => void refresh({ force: true }));
   window.addEventListener('warrior-language-change', () => { if (current) render(current); if (reportSnapshot && window.Warrior.state.page === 'reports') renderReport(reportSnapshot); });
-  const release = () => { if (!offline) return; for (const battle of battles) if (battle.enabled) api.release(battle.id); if (current?.enabled) api.release(current.id); };
+  const release = () => { if (!offline || api.keepInBackground) return; for (const battle of battles) if (battle.enabled) api.release(battle.id); if (current?.enabled) api.release(current.id); };
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { release(); clearPriceFallback(); priceStream?.stop(); refreshController?.abort(); }
+    if (document.hidden) { release(); clearPriceFallback(); if (!api.serviceOwned) priceStream?.stop(); refreshController?.abort(); }
     else { void refresh({ force: true }); priceStream?.start(priceSymbol); }
   });
-  window.addEventListener('pagehide', () => { release(); priceStream?.stop(); });
+  window.addEventListener('pagehide', () => { release(); if (!api.serviceOwned) priceStream?.stop(); });
   window.addEventListener('pageshow', () => { if (!document.hidden) { void refresh({ force: true }); priceStream?.start(priceSymbol); } });
   window.addEventListener('online', () => { void refresh({ force: true }); priceStream?.start(priceSymbol); schedulePriceFallback(1000); });
   api.subscribe?.(event => {
+    notifyAiOutage(event?.aiConnectionFailure);
     if (event?.battleId === '*' || event?.battleId === selected || battles.some(battle => battle.id === event?.battleId)) void refresh();
   });
+  // Widget navigation reads the requested battle first, then uses the same
+  // renderer/detail click as the app. It never resumes or creates a battle.
+  window.Warrior.openStrategy = async (battleId, agentId) => {
+    const data = await api.snapshot(battleId);
+    if (data.placeholder || !data.agents.some(agent => agent.id === agentId)) throw new Error('STRATEGY_NOT_FOUND');
+    choose(battleId); initialSelection = false;
+    for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
+    page('overview'); render(data);
+    const card = [...document.querySelectorAll('[data-sim-agent]')].find(el => el.dataset.simAgent === agentId);
+    if (!card) throw new Error('STRATEGY_NOT_FOUND');
+    card.click();
+  };
   void refresh();
   setInterval(() => void refresh(), offline ? 5000 : 15000);
   setInterval(() => void refreshValuation(), 5000);

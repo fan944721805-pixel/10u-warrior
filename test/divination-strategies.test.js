@@ -6,7 +6,7 @@ const now=1800000000000;
 const indicators={dataTimestamp:now,priceChangePct:{oneMinute:.1,fiveMinutes:.3},rsi14:65,ema:{ema5:105,ema20:100},spotOrderBookImbalance:.3,atr:{value:.2,percent:.2},spread:{basisPoints:2},longReturns:{fifteenMinutes:.7,sixtyMinutes:1.6}};
 const context=(strategy,roundId='round-1',data=indicators)=>{
   const policy=normalizePolicy({strategy,decisionVariance:catalog.profiles[strategy].variance},'oracle');
-  return {policy,indicators:data,now,input:buildDecisionContext({policy,indicators:data,market:{roundId,secondsToClose:300,upOdds:2,downOdds:2,dataTimestamp:now},account:{balance:10,initialBalance:10,wins:0,losses:0,winStreak:0,lossStreak:0,openStake:0}})};
+  return {policy,indicators:data,now,input:buildDecisionContext({policy,indicators:data,market:{roundId,secondsToClose:300,upOdds:2,downOdds:2,dataTimestamp:now},account:{balance:100,initialBalance:100,wins:0,losses:0,winStreak:0,lossStreak:0,openStake:0}})};
 };
 for(const strategy of catalog.divinationStrategies){
   test(`${strategy}: reproducible indicator draw, distinct rounds, bounded BET and SKIP, frozen audit`,async()=>{
@@ -16,7 +16,7 @@ for(const strategy of catalog.divinationStrategies){
       assert.deepEqual(await provider.decide(f.input),raw);
       const plan=validateDecision(raw,f);seeds.add(f.input.divination.seed);actions.add(plan.action);
       assert.equal(plan.divination.seed,f.input.divination.seed);assert.ok(plan.warnings.includes('ENTERTAINMENT_ONLY'));
-      assert.ok(plan.stake<=1);assert.notEqual(plan.riskMode,'ALL_IN');
+      assert.ok(plan.stake<=10);assert.notEqual(plan.riskMode,'ALL_IN');
       assert.equal(decisionAudit({provider,input:f.input,plan,indicators}).divination.seed,f.input.divination.seed);
       if(strategy==='diviner')assert.equal(new Set(f.input.divination.draw.cards.map(x=>x.card)).size,3);
       if(plan.action==='BET')accepted={f,raw};
@@ -25,7 +25,7 @@ for(const strategy of catalog.divinationStrategies){
     const {f,raw}=accepted;
     assert.throws(()=>validateDecision({...raw,divination:{...raw.divination,seed:'tampered'}},f),{code:'AI_DIVINATION_INVALID'});
     assert.throws(()=>validateDecision({...raw,direction:'DOWN',divination:{...raw.divination,verdict:'DOWN'}},f),{code:'AI_STRATEGY_CONDITION_NOT_MET'});
-    assert.throws(()=>validateDecision({...raw,stake_usdt:2,stake_pct:20},f),{code:'AI_STAKE_OVER_CAP'});
+    assert.throws(()=>validateDecision({...raw,stake_usdt:20,stake_pct:20},f),{code:'AI_STAKE_OVER_CAP'});
     assert.throws(()=>validateDecision(raw,{...f,now:now+11000}),{code:'AI_DATA_STALE'});
     const missing=context(strategy,'round-1',{...indicators,rsi14:null});
     await assert.rejects(provider.decide(missing.input),{code:'AI_INDICATOR_MISSING'});

@@ -219,8 +219,8 @@
     records.disabled = true; retry.disabled = true;
     status.textContent = '正在检查执行服务';
     summary.textContent = '';
-    if (app.simulationApi?.mode === 'offline') {
-      status.textContent = '离线模式不可真实下注';
+    if (['offline','native'].includes(app.simulationApi?.mode)) {
+      status.textContent = app.simulationApi.mode === 'native' ? '真实下注未开启' : '离线模式不可真实下注';
       retry.disabled = false;
       return;
     }

@@ -24,6 +24,12 @@ function fixture() {
   return { options, battle, intent, calls, hash, now: options.now, time: value => { time = value; } };
 }
 
+test('recovery-only small paper stakes cannot request a live quote', async () => {
+  const f=fixture();f.intent.simulationOnly=true;
+  await assert.rejects(createExecutionBridge(f.options).quote('b1',f.intent.id),/INTENT_NOT_ELIGIBLE/);
+  assert.deepEqual(f.calls,[]);
+});
+
 test('bridge: preview -> real quote -> explicit confirmation -> exact order and wallet evidence, with persistent identity', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'warrior-bridge-'));
   try {

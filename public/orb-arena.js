@@ -4,11 +4,11 @@
   // Rule AI mode is rendered from the server ledger by paper.js. Never run demo settlement.
   if(document.body.dataset.ruleAi === 'true') return;
   const skinDefaults={
-    claude:{strategy:'aggressive',strategyLabel:'赌狗',coin:'BTC',direction:'看涨',particles:['#fff19b','#ff9d74']},
+    claude:{strategy:'aggressive',strategyLabel:'10U战神',coin:'BTC',direction:'看涨',particles:['#fff19b','#ff9d74']},
     gpt:{strategy:'smart',strategyLabel:'超级AI',coin:'BTC',direction:'看涨',particles:['#9ff8ff','#a69cff']},
     deepseek:{strategy:'conservative',strategyLabel:'守财奴',coin:'BTC',direction:'看空',particles:['#a9ecff','#f47db5']}
   };
-  const strategyLabels={aggressive:'赌狗',smart:'超级AI',conservative:'守财奴'};
+  const strategyLabels={aggressive:'10U战神',smart:'超级AI',conservative:'守财奴'};
   const safeProvider=value=>Object.hasOwn(skinDefaults,value)?value:'gpt';
   const safeStrategy=(value,provider)=>Object.hasOwn(strategyLabels,value)?value:skinDefaults[safeProvider(provider)].strategy;
   const meta={

@@ -827,7 +827,6 @@ body[data-rule-ai="true"] .bottom-nav [data-page="leaderboard"] {
     overflow-x: auto;
     overscroll-behavior-inline: contain;
     scroll-snap-type: inline mandatory;
-    scrollbar-width: thin;
   }
 
   .ai-config {
@@ -1034,3 +1033,14 @@ body[data-rule-ai="true"] .bottom-nav [data-page="leaderboard"] {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+.simulation-repair-panel {
+  margin: 12px 0; padding: 16px; border: 2px solid var(--purple, #7840c9);
+  border-radius: 16px; background: #fff7cf; color: #291841;
+  overflow-wrap: anywhere;
+}
+.simulation-repair-panel[hidden] { display: none; }
+.simulation-repair-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.simulation-repair-panel button, .storage-recovery-dialog button { min-height: 48px; white-space: normal; }
+.storage-recovery-dialog { max-width: min(440px, calc(100vw - 32px)); }
+.storage-recovery-dialog button { margin: 6px; }

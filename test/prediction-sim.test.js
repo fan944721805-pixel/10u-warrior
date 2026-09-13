@@ -117,6 +117,33 @@ test('late node, stale quotes and paused simulation skip without debits', async 
     assert.equal(f.sim.snapshot().agents[0].orders.length, 0);
   }
 });
+
+test('timely ticks survive settlement latency but never extend the quote window or admit late ticks', async () => {
+  for (const [arrival, delay, enters] of [[0, 2000, true], [0, 11000, false], [2000, 0, false]]) {
+    const f = fixture();
+    await f.sim.tick(); f.setTime(f.slot); await f.sim.tick();
+    // Prepare the next market before the old positions expire.
+    f.setTime(f.slot + 20000); await f.sim.tick();
+    f.resolve();
+    const detail = f.source.detail;
+    let delayed = false;
+    f.source.detail = async id => {
+      if (!delayed) { delayed = true; f.setTime(f.now() + delay); }
+      return detail(id);
+    };
+    f.setTime(f.slot + ROUND + arrival); await f.sim.tick();
+    const state = f.sim.snapshot();
+    assert.equal(state.recovery, null);
+    for (const agent of state.agents) {
+      assert.equal(agent.orders.length, enters ? 2 : 1, `arrival=${arrival}, delay=${delay}`);
+      assert.equal(agent.orders[0].status === 'OPEN', false);
+      assert.equal(agent.reconciliation.matched, true);
+      if (enters) assert.equal(agent.latest.placedAt, f.slot + ROUND + delay);
+    }
+    await f.sim.tick();
+    assert.equal(f.sim.snapshot().agents[0].orders.length, enters ? 2 : 1);
+  }
+});
 test('restart preserves open positions and never retries a consumed boundary', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rule-ai-test-'));
   try {
@@ -128,7 +155,7 @@ test('restart preserves open positions and never retries a consumed boundary', a
     assert.equal(restored.snapshot().agents[0].orders.length, 1);
     f.setTime(f.slot + ROUND + 20000); await restored.tick();
     assert.equal(restored.snapshot().agents[0].latest.status, 'OPEN');
-    f.resolve(); f.setTime(f.slot + ROUND + 40000); await restored.tick();
+    f.resolve(); f.setTime(restored.snapshot().recovery.nextRetryAt); await restored.tick();
     assert.equal(restored.snapshot().agents[0].cash, 107.5);
     assert.equal(restored.snapshot().agents[0].wins, 1);
   } finally { fs.rmSync(dir, { recursive: true }); }
@@ -156,5 +183,7 @@ test('unresolved expired stakes stop further bets instead of accumulating twenty
   }
   const a = f.sim.snapshot().agents[0];
   assert.equal(a.cash, 95); assert.equal(a.orders.length, 1); assert.equal(a.reserved, 5);
-  assert.equal(f.sim.snapshot().recovery.status, 'exhausted');
+  assert.equal(f.sim.snapshot().recovery.kind, 'settlement');
+  assert.equal(f.sim.snapshot().recovery.attempts, 0);
+  assert.equal(f.sim.snapshot().recovery.status, 'retrying');
 });

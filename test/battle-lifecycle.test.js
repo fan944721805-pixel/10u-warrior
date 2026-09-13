@@ -29,7 +29,7 @@ function fixture() {
     now: () => time, setTime: value => { time = value; },
     source: { marketFor: async start => topic(start), detail: async start => topic(start), book: async (_, direction) => ({ tokenId: direction === 'UP' ? 'up' : 'down', timestamp: time, asks: [{ price: .4, size: 1000 }] }) },
     indicatorSource: { snapshot: async () => indicatorFixture(time) },
-    decisionProvider: { describe: () => ({ mode: 'mock', simulated: true }), decide: async input => ({ round_id: input.market.round_id, action: 'BET', direction: 'UP', stake_usdt: 1, stake_pct: 100 / input.account.balance, confidence: 90, risk_mode: 'NORMAL', factors: [], reason: 'test-only fixed decision', data_fresh: true, warnings: [] }) },
+    decisionProvider: { describe: () => ({ mode: 'mock', simulated: true }), decide: async input => ({ round_id: input.market.round_id, action: 'BET', direction: 'UP', stake_usdt: 5, stake_pct: 500 / input.account.balance, confidence: 90, risk_mode: 'NORMAL', factors: [], reason: 'test-only fixed decision', data_fresh: true, warnings: [] }) },
   };
 }
 function memoryStorage() { const data = new Map(); return { getItem: key => data.get(key) || null, setItem: (key, value) => data.set(key, value) }; }
@@ -57,7 +57,7 @@ test('server: round 10 stops new orders, settles final stakes, freezes the full 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'warrior-rounds-'));
   try {
     const f = fixture(), options = { ...f, file: path.join(dir, 'ledger.json'), leaseEnabled: false };
-    const manager = createSimulationBattles(options), battle = manager.create('Ten rounds', config());
+    const manager = createSimulationBattles(options), battle = manager.create('Ten rounds', { ...config(), initialBalance: 100 });
     await manager.tick();
     for (let round = 1; round <= 10; round++) {
       f.setTime(manager.snapshot(battle.id).nextSlot);
@@ -68,7 +68,7 @@ test('server: round 10 stops new orders, settles final stakes, freezes the full 
     }
     const pending = manager.snapshot(battle.id);
     assert.equal(pending.status, 'settling');
-    assert.ok(pending.agents.every(a => a.reserved === 1 && a.latest.status === 'OPEN'));
+    assert.ok(pending.agents.every(a => a.reserved === 5 && a.latest.status === 'OPEN'));
     assert.throws(() => manager.setEnabled(true, battle.id), /BATTLE_ENDED/);
     f.setTime(pending.nextSlot); await manager.tick();
     const report = manager.snapshot(battle.id);
@@ -88,7 +88,7 @@ test('server: manual end keeps open stakes, remains terminal on restart, and set
   try {
     const f = fixture(), options = { ...f, file: path.join(dir, 'ledger.json'), leaseEnabled: false };
     let manager = createSimulationBattles(options);
-    const battle = manager.create('Manual', config());
+    const battle = manager.create('Manual', { ...config(), initialBalance: 100 });
     await manager.tick(); f.setTime(battle.nextSlot); await manager.tick();
     const before = manager.snapshot(battle.id), stopped = manager.end(battle.id);
     assert.equal(stopped.status, 'settling');
@@ -98,7 +98,7 @@ test('server: manual end keeps open stakes, remains terminal on restart, and set
     f.setTime(f.now() + ROUND); await manager.tick();
     const report = manager.snapshot(battle.id);
     assert.equal(report.status, 'ended'); assert.equal(report.roundCount, 1);
-    assert.ok(report.agents.every(a => a.cash === 11.5 && a.reserved === 0));
+    assert.ok(report.agents.every(a => a.cash === 107.5 && a.reserved === 0));
     assert.deepEqual(manager.end(battle.id), report);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
@@ -110,7 +110,7 @@ test('server-owned battles run without browser heartbeats, stop manually, and pa
     const options = { ...f, file: path.join(dir, 'ledger.json'), leaseEnabled: false, pauseOnRestore: true, pauseOnError: true };
     const manager = createSimulationBattles(options);
     assert.equal(manager.snapshot().enabled, false);
-    const battle = manager.create('Background', config());
+    const battle = manager.create('Background', { ...config(), initialBalance: 100 });
     await manager.tick();
     f.setTime(f.now() + 60000); await manager.tick();
     assert.equal(manager.snapshot(battle.id).enabled, true);
@@ -120,7 +120,7 @@ test('server-owned battles run without browser heartbeats, stop manually, and pa
     f.setTime(battle.nextSlot); await manager.tick();
     const placed = manager.snapshot(battle.id);
     assert.equal(placed.roundCount, 1);
-    assert.ok(placed.agents.every(a => a.orders.length === 1 && a.reserved === 1));
+    assert.ok(placed.agents.every(a => a.orders.length === 1 && a.reserved === 5));
     const restarted = createSimulationBattles(options);
     const paused = restarted.snapshot(battle.id);
     assert.equal(paused.enabled, false);

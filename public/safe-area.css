@@ -1,0 +1,34 @@
+/* Capacitor 8 injects --safe-area-inset-* on Android; Safari/new WebViews
+   expose env(). Use the larger value, never add them (avoids double spacing).
+   Older WebViews are inset natively by Capacitor and receive zero here. */
+:root {
+  --app-safe-top: max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px));
+  --app-safe-left: max(env(safe-area-inset-left, 0px), var(--safe-area-inset-left, 0px));
+  --app-safe-right: max(env(safe-area-inset-right, 0px), var(--safe-area-inset-right, 0px));
+}
+
+body header.topbar {
+  height: auto;
+  min-height: calc(88px + var(--app-safe-top));
+  padding-top: var(--app-safe-top);
+  padding-left: max(5.5%, calc((100vw - 1280px) / 2), calc(var(--app-safe-left) + 14px));
+  padding-right: max(5.5%, calc((100vw - 1280px) / 2), calc(var(--app-safe-right) + 14px));
+}
+
+@media (max-width: 900px) {
+  body header.topbar {
+    min-height: calc(72px + var(--app-safe-top));
+    padding-left: max(24px, calc(var(--app-safe-left) + 14px));
+    padding-right: max(24px, calc(var(--app-safe-right) + 14px));
+  }
+}
+
+@media (max-width: 760px) {
+  html { scroll-padding-top: calc(128px + var(--app-safe-top)); }
+  body header.topbar {
+    padding-top: calc(10px + var(--app-safe-top));
+    padding-bottom: 10px;
+    padding-left: calc(14px + var(--app-safe-left));
+    padding-right: calc(14px + var(--app-safe-right));
+  }
+}

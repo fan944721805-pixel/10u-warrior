@@ -9,7 +9,7 @@ const { createPredictionSimulation, ROUND } = require('../prediction-sim');
 const { createWarriorServer } = require('../server');
 
 const settings = { provider: 'deepseek', baseUrl: 'https://api.deepseek.com', model: 'fixture-model', apiKey: 'test-secret-never-log' };
-const skip = id => ({ round_id:id, action:'SKIP', direction:null, stake_usdt:0, stake_pct:0, confidence:0, risk_mode:'WAIT', factors:[], reason:'fixture', data_fresh:true, warnings:[] });
+const skip = id => ({ round_id:id, action:'SKIP', direction:null, stake_usdt:0, stake_pct:0, confidence:0, risk_mode:'WAIT', skip_reason_code:'MODEL_UNCERTAIN', factors:[], reason:'fixture', data_fresh:true, warnings:[] });
 const indicators = time => ({ dataTimestamp:time, priceChangePct:{oneMinute:.4,fiveMinutes:1.2}, rsi14:62, ema:{ema5:105,ema20:100},volumeRatio:1.2,spotOrderBookImbalance:.2,
   macd:{line:1,signal:.5,histogram:.5},bollinger:{middle:100,upper:103,lower:97,percentB:.7,bandwidthPct:6},atr:{value:.2,percent:.2},adx:{adx:28,plusDI:30,minusDI:10},roc:{tenMinutes:.8,twentyMinutes:1.2},longReturns:{fifteenMinutes:.9,sixtyMinutes:2.1},momentum:2,volatility:{perMinutePct:.1},takerFlow:{buyRatio:.65,netBase:30,totalBase:100},spread:{basisPoints:1,mid:100,microprice:100.001,micropriceBiasBps:.1} });
 function fixture(time = Date.now(), strategy='smart') {

@@ -10,14 +10,11 @@ body #simulation-commandbar { margin-bottom: 24px; }
 .delete-battle-actions button { min-height:48px; padding:10px; border-radius:10px; font-size:13px; }
 .delete-battle-confirm { border:1px solid #e8c6d2; color:#ac496b; background:#fcecf2; }
 .delete-battle-actions button:disabled { opacity:.5; cursor:wait; }
-.simulation-source-notice { margin: -8px 0 20px; color: #795e8d; font-size: 12px; line-height: 1.6; }
-.simulation-source-notice > summary { min-height: 48px; padding: 12px 14px; box-sizing: border-box; cursor: pointer; border: 1px solid #e3d6ed; border-radius: 12px; background: #faf7fd; }
-.simulation-source-notice > p { padding: 0 14px; overflow-wrap: anywhere; }
 .agent-live-intent { display: none; }
 body[data-betting-mode=live] .agent-live-intent:not([hidden]) { display: block; width: 100%; min-height: 48px; margin-top: 12px; padding: 10px; white-space: normal; }
 .performance { min-width: 0; }
 .performance .section-top:has(.battle-switcher:not([hidden])) { flex-wrap: nowrap; gap: 16px; }
-.battle-switcher { display: flex; gap: 18px; flex: 0 1 auto; min-width: 0; overflow-x: auto; max-width: 100%; margin-right: auto; scrollbar-width: thin; }
+.battle-switcher { display: flex; gap: 18px; flex: 0 1 auto; min-width: 0; overflow-x: auto; max-width: 100%; margin-right: auto; }
 .battle-switcher[hidden] { display: none; }
 .battle-switcher:not([hidden]) + .experiment-title { display: none; }
 .battle-switch { position: relative; display: flex; align-items: center; gap: 7px; flex: 0 0 auto; min-height: 48px; padding: 0 2px; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: #9a87aa; text-align: left; white-space: nowrap; }

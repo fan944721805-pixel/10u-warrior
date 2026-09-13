@@ -1,0 +1,25 @@
+/* The reverse of a settled, empty Agent card. */
+.agent-memorial { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; padding:14px; text-align:center; color:#62437d; }
+.agent-memorial[hidden] { display:none; }
+.agent-defeat-ghost { display:block; width:88px; height:96px; color:#9273b2; }
+.agent-defeat-ghost svg { display:block; width:100%; height:100%; }
+.agent-memorial > strong { font-size:23px; letter-spacing:.06em; color:#604076; }
+.agent-memorial > p { margin:0; font-size:12px; line-height:1.6; color:#856e96; }
+.agent-memorial > small { font-size:10px; color:#9884a6; }
+body[data-rule-ai=true] #ai-arena .model-card.agent-summary[data-life-state=defeated] { background:linear-gradient(145deg,#f8f3fc,#e9dff3); border-color:#cdbbdd; box-shadow:0 4px 0 #d7c5e5; }
+#ai-arena .agent-summary[data-life-state=defeated] .model-ai-avatar,
+.agent-defeat-heading .detail-ai-avatar { filter:grayscale(1); opacity:.55; }
+#ai-arena .agent-summary[data-life-state=defeated] :is(.agent-round,.agent-stats,.agent-floating,.agent-added-capital,.agent-live-intent,.profit-leader-badges) { display:none!important; }
+#ai-arena .agent-summary[data-life-state=defeated] .agent-balance > span { display:none; }
+#ai-arena .agent-summary[data-life-state=defeated] .agent-equity-head { margin-bottom:0; }
+#ai-arena .agent-summary[data-life-state=defeated] .agent-detail-link { color:#654180; font-weight:700; }
+#ai-arena .agent-summary.is-defeat-turning { animation:agent-defeat-turn .85s cubic-bezier(.22,.68,.26,1) both; transform-origin:left center; }
+#ai-arena .agent-summary.is-defeat-turning .agent-defeat-ghost { animation:agent-defeat-rise 1.15s ease-out both; }
+@keyframes agent-defeat-turn { 0% { transform:perspective(1000px) rotateY(-82deg); opacity:.3; } 60% { transform:perspective(1000px) rotateY(5deg); opacity:1; } 100% { transform:perspective(1000px) rotateY(0); } }
+@keyframes agent-defeat-rise { 0%,30% { transform:translateY(16px); opacity:0; } 100% { transform:translateY(0); opacity:1; } }
+#detail-dialog .agent-memorial { border-radius:16px; background:linear-gradient(145deg,#f8f3fc,#e9dff3); padding:12px; }
+#detail-dialog .agent-memorial .agent-defeat-ghost { width:64px; height:70px; }
+.agent-defeat-results { padding:0 12px 12px; max-height:320px; overflow:auto; }
+.agent-defeat-result { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(80px,auto); align-items:center; gap:12px; padding:12px 0; border-top:1px solid #e7dcec; font-size:12px; color:#816693; }
+.agent-defeat-result strong { text-align:right; font-variant-numeric:tabular-nums; }
+@media (prefers-reduced-motion:reduce) { #ai-arena .agent-summary.is-defeat-turning, #ai-arena .agent-summary.is-defeat-turning .agent-defeat-ghost { animation:none; } }

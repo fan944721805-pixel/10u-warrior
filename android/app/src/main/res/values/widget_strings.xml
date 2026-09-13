@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_title">Strategy status</string>
+    <string name="widget_hint">Swipe up/down · Tap for details</string>
+    <string name="widget_empty">No strategies. Tap to start a battle in the app.</string>
+    <string name="widget_snapshot">Snapshot · Simulated</string>
+    <string name="widget_age">Updated %s ago</string>
+    <string name="widget_stale">Updates stopped. Tap to open app.</string>
+    <string name="widget_open">Open app</string>
+</resources>

@@ -11,6 +11,24 @@ function memoryStorage() {
   };
 }
 
+test('offline recovery permits a sub-5U full bet and preserves recovery after reload above the trigger',()=>{
+  let timestamp=Date.UTC(2026,8,12,4,1,0);const storage=memoryStorage();
+  let runtime=createOfflineSimulation({storage,now:()=>timestamp,randomUUID:()=> 'capital-offline'});
+  runtime.create('Recovery fixture',{initialBalance:10,agents:[{id:'recovery',strategy:'aggressive',maxStakePct:100,allowAllIn:true}]});
+  const saved=JSON.parse(storage.getItem(STORAGE_KEY)),battle=saved.battles.find(b=>b.id==='capital-offline');
+  battle.agents[0].cash=4;battle.agents[0].capitalRecovery=true;
+  storage.setItem(STORAGE_KEY,JSON.stringify(saved));runtime=createOfflineSimulation({storage,now:()=>timestamp});
+  assert.equal(runtime.snapshot('capital-offline').agents[0].capitalRecovery,true);
+  runtime.setEnabled('capital-offline',true);
+  let snapshot=runtime.snapshot('capital-offline');
+  for(let i=0;i<100&&!snapshot.agents[0].orders.length;i++){
+    timestamp=snapshot.nextSlot;snapshot=runtime.snapshot('capital-offline');
+  }
+  assert.equal(snapshot.agents[0].orders[0]?.amount,4);
+  assert.equal(snapshot.agents[0].lastDecision.riskMode,'ALL_IN');
+  assert.equal(snapshot.agents[0].lastDecision.capitalManagement.recoveryActive,true);
+});
+
 test('offline simulation creates persisted paper battles without a server', () => {
   let timestamp = Date.UTC(2026, 8, 12, 4, 1, 0);
   const storage = memoryStorage();

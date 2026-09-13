@@ -4,6 +4,10 @@ const crypto = require('node:crypto');
 const { atomicWriteJson } = require('./atomic-json');
 const { profiles } = require('./public/strategy-catalog');
 const { assertDecisionInputs, decisionPrompt, createMockDecisionProvider, DECISION_META } = require('./ai-decision');
+const { aiFetch } = require('./ai-transport');
+const RETRY_DELAYS = [500, 1000];
+const RETRYABLE = new Set(['AI_REQUEST_FAILED', 'AI_REQUEST_TIMEOUT', 'AI_RATE_LIMITED', 'AI_UPSTREAM_UNAVAILABLE']);
+const CONNECTION_FAILURES = new Set([...RETRYABLE, 'AI_AUTH_FAILED', 'AI_CONNECTION_NOT_TESTED']);
 
 const fail = (code, statusCode = 422) => Object.assign(new Error(code), { code, statusCode });
 const providers = new Set(['openai', 'anthropic', 'deepseek', 'custom']);
@@ -20,7 +24,7 @@ function usageOf(payload, provider) {
   if (cached + cacheWrite > input) return null;
   return { input, output, cached, cacheWrite, total: input + output };
 }
-function createAiConnections({ file, fetchImpl = fetch, now = Date.now, fallback = createMockDecisionProvider() } = {}) {
+function createAiConnections({ file, fetchImpl = aiFetch, now = Date.now, wait = ms => new Promise(resolve => setTimeout(resolve, ms)), fallback = createMockDecisionProvider(), secretCodec } = {}) {
   let state = file && fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : { version: 1, connections: {}, assignments: {}, usage: {}, recent: [] };
   if (state.version !== 1 || !state.connections || !state.assignments || !state.usage || !Array.isArray(state.recent)) throw fail('AI_STORE_INVALID', 503);
   let memoryKey, broken = false;
@@ -41,11 +45,13 @@ function createAiConnections({ file, fetchImpl = fetch, now = Date.now, fallback
     return memoryKey;
   }
   function seal(secret) {
+    if (secretCodec) return secretCodec.seal(secret);
     const iv = crypto.randomBytes(12), cipher = crypto.createCipheriv('aes-256-gcm', key(), iv);
     const bytes = Buffer.concat([cipher.update(secret, 'utf8'), cipher.final()]);
     return { iv: iv.toString('base64'), tag: cipher.getAuthTag().toString('base64'), data: bytes.toString('base64') };
   }
   function unseal(secret) {
+    if (secretCodec) return secretCodec.unseal(secret);
     try {
       const decipher = crypto.createDecipheriv('aes-256-gcm', key(), Buffer.from(secret.iv, 'base64'));
       decipher.setAuthTag(Buffer.from(secret.tag, 'base64'));
@@ -101,6 +107,10 @@ function createAiConnections({ file, fetchImpl = fetch, now = Date.now, fallback
       usage, error: error || null };
     aggregate.last = event;
     next.recent = [...next.recent, event].slice(-200);
+    if (next.connections[c.id]?.revision === c.revision) {
+      next.connections[c.id].lastError = error || null;
+      next.connections[c.id].lastCheckedAt = now();
+    }
     commit(next);
     return event;
   }
@@ -116,13 +126,14 @@ function createAiConnections({ file, fetchImpl = fetch, now = Date.now, fallback
         response_format: { type: 'json_object' }, ...(isOpenai ? { max_completion_tokens: 4096 } : { max_tokens: 1500 }),
         ...(c.provider === 'deepseek' ? { thinking: { type: 'disabled' } } : {}) };
     let payload, raw, failure;
+    if(kind==='decision')options.onRequest?.({provider:c.provider,body:structuredClone(body),responseContract:'strategy-v2'});
     try {
       const response = await fetchImpl(`${c.baseUrl}/${isClaude ? 'messages' : 'chat/completions'}`, {
         method: 'POST', redirect: 'error', signal: AbortSignal.timeout(budget),
         headers: isClaude ? { 'content-type': 'application/json', 'x-api-key': secret, 'anthropic-version': '2023-06-01' }
           : { 'content-type': 'application/json', authorization: `Bearer ${secret}` }, body: JSON.stringify(body),
       });
-      if (!response.ok) throw fail(response.status === 401 || response.status === 403 ? 'AI_AUTH_FAILED' : response.status === 429 ? 'AI_RATE_LIMITED' : 'AI_REQUEST_REJECTED', 503);
+      if (!response.ok) throw fail(response.status === 401 || response.status === 403 ? 'AI_AUTH_FAILED' : response.status === 429 ? 'AI_RATE_LIMITED' : response.status >= 500 ? 'AI_UPSTREAM_UNAVAILABLE' : 'AI_REQUEST_REJECTED', 503);
       payload = await response.json();
       if (payload.stop_reason === 'max_tokens' || payload.choices?.[0]?.finish_reason === 'length') throw fail('AI_RESPONSE_TRUNCATED');
       const content = isClaude ? payload.content?.filter(v => v.type === 'text').map(v => v.text).join('') : payload.choices?.[0]?.message?.content;
@@ -133,8 +144,23 @@ function createAiConnections({ file, fetchImpl = fetch, now = Date.now, fallback
     } catch (e) { failure = e.code?.startsWith?.('AI_') ? e : fail(e.name === 'TimeoutError' || e.name === 'AbortError' ? 'AI_REQUEST_TIMEOUT' : 'AI_REQUEST_FAILED', 503); }
     const event = accountCall(c, input.policy?.strategy || null, kind, started, payload, failure?.code);
     if (failure) throw failure;
-    Object.defineProperty(raw, DECISION_META, { value: { engine: engine(c), usage: event } });
+    Object.defineProperty(raw, DECISION_META, { value: { engine: engine(c), usage: event, ...(kind==='decision'?{responseContract:'strategy-v2'}:{}) } });
     return raw;
+  }
+  async function testConnection(id, revision) {
+    const c = state.connections[id];
+    if (!c || (revision && revision !== c.revision)) throw fail('AI_CONFIGURATION_CHANGED', 409);
+    if (busy.has(id)) throw fail('AI_CONNECTION_BUSY', 409);
+    busy.add(id);
+    try {
+      const input = { market: { round_id: 'connection-test' }, policy: { strategy: 'connection-test' } };
+      await invoke(c, 'Connection test only. Return exactly this JSON object: {"round_id":"connection-test","action":"SKIP","direction":null,"stake_usdt":0,"stake_pct":0,"confidence":0,"risk_mode":"WAIT","factors":[],"reason":"connection test","data_fresh":true,"warnings":[]}', input, {}, 'test');
+      commit({ ...state, connections: { ...state.connections, [id]: { ...state.connections[id], testedAt: now(), lastError: null } } });
+      return snapshot();
+    } catch (error) {
+      if (!broken) commit({ ...state, connections: { ...state.connections, [id]: { ...state.connections[id], lastError: error.code } } });
+      throw error;
+    } finally { busy.delete(id); }
   }
   async function save(body, test = false) {
     if (busy.has(body?.provider)) throw fail('AI_CONNECTION_BUSY', 409);
@@ -181,9 +207,22 @@ function createAiConnections({ file, fetchImpl = fetch, now = Date.now, fallback
       if (!c?.testedAt) throw fail('AI_CONNECTION_NOT_TESTED', 503);
       if(input.policy.ai_connection_revision && input.policy.ai_connection_revision!==c.revision) throw fail('AI_CONFIGURATION_CHANGED');
       assertDecisionInputs(input);
-      const raw = await invoke(c, decisionPrompt(input), input, options);
-      if (options.isCancelled?.() || (input.policy.ai_connection_id===undefined && state.assignmentVersions?.[input.policy.strategy] !== version) || connectionFor(input) !== id || state.connections[id]?.revision !== c.revision || !state.connections[id]?.testedAt) throw fail('AI_CONFIGURATION_CHANGED');
-      return raw;
+      const cancelled = () => options.isCancelled?.() || (input.policy.ai_connection_id===undefined && state.assignmentVersions?.[input.policy.strategy] !== version) || connectionFor(input) !== id || state.connections[id]?.revision !== c.revision || !state.connections[id]?.testedAt;
+      const clock = options.now || now;
+      const deadlineMs = Math.min(options.deadlineMs ?? Infinity, input.market.data_timestamp + 10000);
+      for (let attempt = 0; ; attempt++) {
+        if (cancelled()) throw fail('AI_CONFIGURATION_CHANGED');
+        try {
+          const raw = await invoke(c, decisionPrompt(input), input, { ...options, deadlineMs, isCancelled: cancelled });
+          if (cancelled()) throw fail('AI_CONFIGURATION_CHANGED');
+          return raw;
+        } catch (error) {
+          if (CONNECTION_FAILURES.has(error.code)) options.onConnectionFailure?.(error);
+          if (!RETRYABLE.has(error.code) || attempt >= RETRY_DELAYS.length || cancelled() ||
+              clock() + RETRY_DELAYS[attempt] + 500 >= deadlineMs) throw error;
+          await wait(RETRY_DELAYS[attempt]);
+        }
+      }
     },
   };
   function assertAgents(agents = []) {
@@ -195,6 +234,6 @@ function createAiConnections({ file, fetchImpl = fetch, now = Date.now, fallback
       if(a.aiConnectionRevision!==c.revision)throw fail('AI_CONFIGURATION_CHANGED',409);
     }
   }
-  return { snapshot, save, assign, remove, router, assertAgents };
+  return { snapshot, save, testConnection, assign, remove, router, assertAgents };
 }
-module.exports = { createAiConnections, usageOf };
+module.exports = { createAiConnections, usageOf, CONNECTION_FAILURES };

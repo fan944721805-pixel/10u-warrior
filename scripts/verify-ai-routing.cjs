@@ -6,7 +6,7 @@ const { createWarriorServer } = require('../server');
 const { calculateIndicatorSnapshot } = require('../market-indicators');
 
 (async () => {
-  let calls = 0;
+  let calls = 0, failConnections = false;
   const server = createWarriorServer({ paperFile:null, walletCli:async()=>{throw new Error('NO_WALLET');}, marketFetch:async()=>{throw new Error('NO_MARKET');},
     indicatorSource:{snapshot:async()=>{
       // The preview fixture uses a conservative conflict snapshot, never real funds.
@@ -15,7 +15,7 @@ const { calculateIndicatorSnapshot } = require('../market-indicators');
         macd:{line:0,signal:0,histogram:0},bollinger:{middle:100,upper:101,lower:99,percentB:.5,bandwidthPct:2},atr:{value:.1,percent:.1},adx:{adx:10,plusDI:10,minusDI:10},longReturns:{fifteenMinutes:0,sixtyMinutes:0},volatility:{perMinutePct:.1},takerFlow:{buyRatio:.5,netBase:0,totalBase:10},spread:{basisPoints:1,mid:100,microprice:100,micropriceBiasBps:0}};
     }},
     aiFetch:async(_,options)=>{
-      calls++;const body=JSON.parse(options.body),input=JSON.parse(body.messages.at(-1).content);
+      calls++;if(failConnections)throw new TypeError('fixture connection failed');const body=JSON.parse(options.body),input=JSON.parse(body.messages.at(-1).content);
       return {ok:true,json:async()=>({choices:[{finish_reason:'stop',message:{content:JSON.stringify({round_id:input.market.round_id,action:'SKIP',direction:null,stake_usdt:0,stake_pct:0,confidence:50,risk_mode:'WAIT',factors:[],reason:'UI fixture: no signal',data_fresh:true,warnings:[]})}}],usage:{prompt_tokens:123,completion_tokens:45,prompt_cache_hit_tokens:20}})};
     } });
   await new Promise(r=>server.listen(0,'127.0.0.1',r));
@@ -74,7 +74,7 @@ const { calculateIndicatorSnapshot } = require('../market-indicators');
     await page.locator('#battle-ai-save').click();
     await page.locator('#battle-ai-edit').click();
     assert.equal(await page.locator('[data-battle-model=gpt]').inputValue(),'deepseek');
-    assert.equal(calls,2);
+    assert.ok(calls>=5,'each explicit model selection performs a live connection test');
     const created=await(await fetch(url+'/api/simulation/battles',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'Model binding fixture',config:{agents:configured,initialBalance:10}})})).json();
     assert.equal(created.config.agents.find(a=>a.sourceAgentId==='gpt'&&a.aiConnectionId==='deepseek').aiConnectionId,'deepseek');
     assert.equal(created.config.agents.filter(a=>a.sourceAgentId==='gpt').length,1);
@@ -89,10 +89,23 @@ const { calculateIndicatorSnapshot } = require('../market-indicators');
       await page.screenshot({path:path.join(output,`${width}-${language}.png`)});
     }
     const settings=await(await fetch(url+'/api/ai/settings')).json();
-    assert.equal(settings.usage.deepseek.total,168);assert.equal(settings.usage.deepseek.calls,1);
+    assert.equal(settings.usage.deepseek.total,168*settings.usage.deepseek.calls);assert.ok(settings.usage.deepseek.calls>=3);
     assert.ok(!JSON.stringify(settings).includes('fixture-legacy-key'));
-    await page.reload();await page.waitForFunction(()=>window.Warrior.aiConnections.snapshot()?.connections.some(c=>c.tested));assert.equal(calls,2);
+    // Failure must visibly revert the selection, including both locales.
+    for(const language of ['zh','en']) {
+      await page.evaluate(lang=>{const select=document.querySelector('.language-toggle');select.value=lang;select.dispatchEvent(new Event('change'));},language);
+      failConnections=true;
+      const message=new Promise(resolve=>page.once('dialog',async dialog=>{resolve(dialog.message());await dialog.accept();}));
+      await page.locator('[data-battle-model=gpt]').selectOption('openai');
+      assert.match(await message,language==='en'?/Switched to local rules/:/已切回本地规则/);
+      await page.waitForFunction(()=>document.querySelector('[data-battle-model=gpt]').value==='none'&&!document.querySelector('#battle-ai-save').disabled);
+      failConnections=false;
+    }
+    await page.locator('#battle-ai-save').click();
+    assert.equal((await page.evaluate(()=>window.Warrior.battleModels.configure(window.agentSetup.getAgents()))).find(a=>a.sourceAgentId==='gpt').aiConnectionId,'none');
+    const callsBeforeReload=calls;
+    await page.reload();await page.waitForFunction(()=>window.Warrior.aiConnections.snapshot()?.connections.some(c=>c.tested));assert.equal(calls,callsBeforeReload);
     assert.deepEqual(errors,[]);
-    console.log(JSON.stringify({passed:true,checks:['legacy encrypted key migration','tested-only assignment','independent AI dialog','single model per strategy','cancel discards draft','save preserves selection','battle creation model selector','tested connections only','refresh preserves selection','battle ledger retains model binding','assignment makes no model request','no per-strategy test buttons','token totals','no price inputs','Chinese and English at 360/768/1440','reload persistence'],calls,output}));
+    console.log(JSON.stringify({passed:true,checks:['legacy encrypted key migration','model selection tests connection','independent AI dialog','single model per strategy','cancel discards draft','save preserves selection','battle ledger retains model binding','failed selection alerts and falls back to rules','token totals','Chinese and English at 360/768/1440','reload persistence'],calls,output}));
   } finally {await browser.close();await new Promise(r=>server.close(r));}
 })().catch(e=>{console.error(e);process.exitCode=1;});

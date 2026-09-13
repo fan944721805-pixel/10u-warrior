@@ -17,11 +17,11 @@ test('no-wallet practice completes virtual entry and settlement using credential
   await sim.tick(); f.setTime(f.slot); await sim.tick();
   let state = sim.snapshot(), order = state.agents[0].orders[0];
   assert.ok(order, JSON.stringify(state)); assert.equal(state.marketSource, 'public-spot');
-  assert.equal(order.quote.odds, 2); assert.equal(state.agents[0].cash, 99);
+  assert.equal(order.quote.odds, 2); assert.equal(state.agents[0].cash, 95);
   assert.equal(order.intent.marketSource, 'public-spot');
   f.setTime(f.slot + ROUND + 16000); await sim.tick();
   state = sim.snapshot(); order = state.agents[0].orders[0];
-  assert.equal(order.status, 'WON'); assert.equal(order.payout, 2); assert.equal(state.agents[0].cash, 101);
+  assert.equal(order.status, 'WON'); assert.equal(order.payout, 10); assert.equal(state.agents[0].cash, 105);
   assert.equal(order.settlement.source, 'public-spot-practice');
   assert.ok(state.agents[0].reconciliation.matched);
   assert.ok(f.calls.every(args => args.join(' ') === 'wallet status'));
@@ -51,8 +51,8 @@ test('connection at boundary upgrades practice; paper uses real book and live ex
   const battle = { ...sim.snapshot(), id: 'battle' }, agent = battle.agents[0], intent = agent.latest.intent;
   assert.equal(battle.marketSource, 'binance-prediction');
   assert.equal(agent.latest.quote.source, 'real-book-fee-estimate');
-  assert.equal(agent.latest.quote.shares, 2.45); assert.ok(Math.abs(agent.latest.quote.feeShares - .05) < 1e-10);
-  assert.equal(agent.cash, 99); // no second deduction of a fee denominated in shares
+  assert.equal(agent.latest.quote.shares, 12.25); assert.ok(Math.abs(agent.latest.quote.feeShares - .25) < 1e-10);
+  assert.equal(agent.cash, 95); // no second deduction of a fee denominated in shares
   assert.ok(!JSON.stringify(battle).includes('official-private'));
   const quoteCalls = f.calls.filter(args => args[2] === 'quote').length;
   assert.equal(quoteCalls, 0);
@@ -61,9 +61,9 @@ test('connection at boundary upgrades practice; paper uses real book and live ex
     quotesEnabled: true, tradingEnabled: true, requestQuote: async (value, slippage) => f.source.executionQuote(value, slippage),
     submitOrder: async id => { submitted++; usedQuote = id; return { orderId: 'TEST_ONLY' }; } });
   const quoted = await bridge.quote('battle', intent.id);
-  assert.equal(submitted, 0); assert.equal(Number(quoted.quote.amountOut), 2.4);
+  assert.equal(submitted, 0); assert.equal(Number(quoted.quote.amountOut), 12);
   assert.deepEqual(quoted.intent, intent);
-  assert.equal(quoted.intent.paperEstimate.shares, 2.45);
+  assert.equal(quoted.intent.paperEstimate.shares, 12.25);
   assert.equal(f.calls.filter(args => args[2] === 'quote').length, quoteCalls + 1);
   await assert.rejects(bridge.submit(quoted.id, false), /HUMAN_CONFIRMATION_REQUIRED/);
   await bridge.submit(quoted.id, true);
@@ -87,7 +87,7 @@ test('practice and official positions keep their original settlement sources acr
   assert.equal(sim.snapshot().agents[0].orders[1].status, 'OPEN');
   sim = simulation(f, { file }); f.connect(true); f.setTime(f.now() + 16000); await sim.tick();
   orders = sim.snapshot().agents[0].orders;
-  assert.equal(orders[1].status, 'WON'); assert.equal(orders[1].payout, 2.45);
+  assert.equal(orders[1].status, 'WON'); assert.equal(orders[1].payout, 12.25);
   assert.equal(orders[1].settlement.source, 'official-market'); assert.equal(sim.snapshot().status, 'ended');
 });
 
@@ -126,7 +126,7 @@ test('slow official quote expiring the saved decision cannot be submitted or cha
   const bridge = createExecutionBridge({ now: f.now, getIntent: () => ({ battle, agent, intent }), quotesEnabled: true,
     requestQuote: (value, slippage) => f.source.executionQuote(value, slippage) });
   await assert.rejects(bridge.quote('b', intent.id), /INTENT_EXPIRED/);
-  assert.equal(sim.snapshot().agents[0].cash, 99); assert.equal(sim.snapshot().agents[0].orders.length, 1);
+  assert.equal(sim.snapshot().agents[0].cash, 95); assert.equal(sim.snapshot().agents[0].orders.length, 1);
   assert.equal(bridge.list()[0].status, 'QUOTE_FAILED');
 });
 
@@ -146,8 +146,8 @@ test('an empty connected wallet can paper trade; rejected real quote does not ch
     run: async () => { throw Object.assign(new Error('TRADE_INSUFFICIENT_BALANCE'), { code: 'UNKNOWN_ERROR' }); } });
   const sim = simulation(f, { source }); await sim.tick(); f.setTime(f.slot); await sim.tick();
   const data = sim.snapshot();
-  assert.equal(data.agents[0].cash, 99); assert.equal(data.agents[0].orders.length, 1);
-  assert.equal(data.agents[0].latest.quote.shares, 2.45);
+  assert.equal(data.agents[0].cash, 95); assert.equal(data.agents[0].orders.length, 1);
+  assert.equal(data.agents[0].latest.quote.shares, 12.25);
   await assert.rejects(source.executionQuote(data.agents[0].latest.intent, 1000), /TRADE_INSUFFICIENT_BALANCE/);
   assert.deepEqual(sim.snapshot().agents[0].orders, data.agents[0].orders);
 });
@@ -155,7 +155,7 @@ test('an empty connected wallet can paper trade; rejected real quote does not ch
 test('shared source survives battle wrapper; HTTP execution requests an official quote for the saved decision', async () => {
   const f = fixture(); f.connect(true);
   const sim = createSimulationBattles({ source: f.source, indicatorSource: f.indicatorSource, decisionProvider: f.decisionProvider, now: f.now, leaseEnabled: false });
-  const created = sim.create('shared', { initialBalance: 10, agents: [f.policy] });
+  const created = sim.create('shared', { initialBalance: 100, agents: [f.policy] });
   await sim.tick(); f.setTime(f.slot); await sim.tick();
   const order = sim.snapshot(created.id).agents[0].latest;
   assert.equal(order.quote.source, 'real-book-fee-estimate');
@@ -167,7 +167,7 @@ test('shared source survives battle wrapper; HTTP execution requests an official
     const before = f.calls.filter(args => args[2] === 'quote').length;
     const response = await fetch(origin + '/api/executions/quote', { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify({ battleId: created.id, intentId: order.intent.id }) });
     const body = await response.json(); assert.equal(response.status, 200, JSON.stringify(body));
-    assert.equal(Number(body.quote.amountOut), 2.4);
+    assert.equal(Number(body.quote.amountOut), 12);
     assert.equal(body.intent.paperEstimate.shares, order.quote.shares);
     assert.equal(before, 0);
     assert.equal(f.calls.filter(args => args[2] === 'quote').length, before + 1);

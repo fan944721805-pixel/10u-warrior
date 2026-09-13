@@ -21,7 +21,7 @@ test('Candlestick Bro can enter on one strong body in either direction without o
     assert.deepEqual(Object.keys(f.input.indicators),['raw_candles','market_odds']);
     assert.ok(plan.stakePct<=20);assert.equal(f.policy.allowAllIn,false);
     assert.equal(f.policy.actionUrge,catalog.profiles.aggressive.actionUrge);
-    assert.match(decisionPrompt(f.input),/raw-candle Gambler/);
+    assert.match(decisionPrompt(f.input),/raw-candle 10U Warrior/);
   }
   const flat=context('priceAction',{dataTimestamp:now,candles:{intervalMinutes:1,targetMinutes:5,bars}});
   assert.equal((await createMockDecisionProvider().decide(flat.input)).action,'SKIP');

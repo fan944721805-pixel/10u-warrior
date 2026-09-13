@@ -58,14 +58,14 @@ const { chromium } = require(process.env.PLAYWRIGHT_PATH || 'playwright');
     }
     await page.locator('#api-connect').click();
     await page.locator('#ai-settings-strategy-tab').click();
-    await page.locator('#ai-strategy-agent').selectOption('claude');
     await page.locator('#ai-editor-basic-tab').click();
-    await page.locator('#agent-name').fill('New draft only');
     await page.locator('[data-agent-strategy=conservative]').click();
+    await page.locator('#ai-editor-policy-tab').click();
+    await page.locator('#decision-variance').fill('37');
+    await page.locator('#decision-variance').dispatchEvent('input');
     await page.locator('#save-agent').click();
     await page.locator('.api-dialog-close').click();
     await page.locator('.model-grid .model-card').first().click();
-    assert.ok(!(await page.locator('#detail-content').innerText()).includes('New draft only'));
     await page.locator('#detail-dialog .close-dialog').click();
     assert.deepEqual(await page.evaluate(() => window.Warrior.state.simulation.config), initial.config);
     console.log('Editing strategy draft leaves old battle unchanged');

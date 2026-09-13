@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/widget_card"
+    android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="192dp" android:orientation="vertical"
+    android:padding="12dp" android:background="@drawable/widget_card_background">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical">
+        <ImageView android:id="@+id/widget_avatar" android:layout_width="44dp" android:layout_height="44dp" android:src="@drawable/launcher_art" android:scaleType="centerCrop" android:importantForAccessibility="no" />
+        <LinearLayout android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:orientation="vertical" android:paddingStart="8dp">
+            <TextView android:id="@+id/widget_name" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#FFFFFF" android:textStyle="bold" android:textSize="18sp" android:maxLines="1" android:ellipsize="end" />
+            <TextView android:id="@+id/widget_coin" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#E6D3FF" android:textSize="12sp" />
+        </LinearLayout>
+    </LinearLayout>
+    <TextView android:id="@+id/widget_battle" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="5dp" android:textColor="#E6D3FF" android:textSize="12sp" android:maxLines="1" android:ellipsize="end" />
+    <TextView android:id="@+id/widget_funds" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:textColor="#FFFFFF" android:textStyle="bold" android:textSize="17sp" />
+    <TextView android:id="@+id/widget_profit" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#D9FF43" android:textSize="14sp" />
+    <TextView android:id="@+id/widget_action" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:textColor="#D9FF43" android:textStyle="bold" android:textSize="17sp" android:maxLines="1" android:ellipsize="end" />
+    <TextView android:id="@+id/widget_status" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#E6D3FF" android:textSize="12sp" android:maxLines="1" android:ellipsize="end" />
+</LinearLayout>

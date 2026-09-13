@@ -3,6 +3,7 @@
   const editor=document.querySelector('#agent-editor');
   const addButton=document.querySelector('#add-coin');
   if(!list||!editor||!addButton)return;
+  addButton.hidden=true;
 
   const compactStrategies=matchMedia('(max-width: 760px)');
   const strategyToggle=document.createElement('button');
@@ -30,10 +31,10 @@
   const skinRegistry=window.Warrior?.skins;
   const providerNames={claude:'Claude',gpt:'GPT',deepseek:'DeepSeek'};
   const defaultAgentNames={claude:'狐火术师',gpt:'星环机甲',deepseek:'深海灵兽',trendFollowing:'跟风侠',meanReversion:'抄底摸顶王',priceAction:'蜡烛哥',breakout:'火箭哥',orderFlow:'大单侦探',volatilityGuard:'稳如老狗',consensus:'六票战神'};
-  Object.assign(defaultAgentNames,{fengShui:'风水师',diviner:'占卜师',czBrother:'CZ大表哥',contrarian:'逆行者',showoff:'装逼的人',firstLady:'一姐'});
+  Object.assign(defaultAgentNames,{fengShui:'风水师',diviner:'占卜师',czBrother:'CZ大表哥',contrarian:'逆行者',showoff:'装逼的人',firstLady:'一姐',liangXi:'凉兮'});
   const defaultAgentIds=Object.keys(defaultAgentNames);
   const providerStrategies={claude:'aggressive',gpt:'smart',deepseek:'conservative'};
-  const maxCards=16,maxSelected=8;
+  const maxCards=17,maxSelected=8;
   const {profiles:strategyProfiles,indicators:indicatorCatalog,defaultIndicators}=window.WarriorStrategyCatalog;
   let editingId=null, editingProvider='gpt', editingSkinId='anime-female';
 
@@ -45,7 +46,7 @@
   const safeVariance=(value,profile)=>Number.isFinite(Number(value))?Math.max(0,Math.min(100,Math.round(Number(value)))):profile.variance;
   const safeActionUrge=(value,profile)=>Number.isFinite(Number(value))?Math.max(0,Math.min(100,Math.round(Number(value)))):profile.actionUrge;
   const safeEmotion=(value,profile)=>Number.isFinite(Number(value))?Math.max(0,Math.min(100,Math.round(Number(value)))):profile.emotionSensitivity;
-  const safeMaxStake=(value,profile)=>Number.isFinite(Number(value))?Math.max(5,Math.min(profile.maxStakePct,Math.round(Number(value)/5)*5)):profile.maxStakePct;
+  const safeMaxStake=(value,profile)=>profile.fixedStakeChoices?100:Number.isFinite(Number(value))?Math.max(5,Math.min(profile.maxStakePct,Math.round(Number(value)/5)*5)):profile.maxStakePct;
   const recommendedIndicators=profile=>[...new Set(profile.recommended || profile.required || defaultIndicators)];
   const safeIndicators=(value,profile=strategyProfiles.smart)=>{
     const recommended=recommendedIndicators(profile);
@@ -141,6 +142,11 @@
   }
 
   function renderDecisionConfig(){
+    const activeProfile=strategyFor(selectedOption('strategy'),selectedOption('model'));
+    const fixed=Boolean(activeProfile.fixedStakeChoices);
+    document.querySelector('#max-stake').closest('.agent-setting').hidden=fixed;
+    document.querySelector('.agent-all-in').hidden=fixed;
+    if(fixed){document.querySelector('#max-stake').value='100';document.querySelector('#agent-all-in').checked=true;}
     const config=currentDecisionConfig(),{profile,variance,actionUrge,emotionSensitivity,maxStakePct,allowAllIn}=config;
     document.querySelector('#decision-variance-value').textContent=String(variance);
     document.querySelector('#action-urge-value').textContent=String(actionUrge);
@@ -161,13 +167,15 @@
     allInNote.textContent=!profile.allowAllIn?'当前策略禁止梭哈。':maxStakePct!==100?'单轮上限必须为 100% 才能梭哈。':'只使用模拟余额；仍须满足该策略的强信号条件。';
     const risk=document.querySelector('#agent-risk-summary');
     const rules={
+      liangXi:['短线选点，多空切换','仅半仓或全仓；无信号可观望'],
       aggressive:['连胜加码',allowAllIn?'强信号可梭哈':'禁止梭哈'],
       smart:['先判局势再换重点',allowAllIn?'极强优势可梭哈':'禁止梭哈'],
       conservative:['不全同向就捂钱袋']
     }[profile.key] || ['允许不下注'];
     rules.push(profile.emotionLabel);
     const ladder=document.createElement('span');ladder.className='agent-stake-ladder';
-    for(const [label,percent] of [['试一口',profile.stakeTiers[0]],['有把握',profile.stakeTiers[1]],['火力全开',profile.stakeTiers[2]]]){
+    if(fixed)ladder.classList.add('agent-stake-binary');
+    for(const [label,percent] of (fixed?[['半仓梭哈',50],['全仓梭哈',100]]:[['试一口',profile.stakeTiers[0]],['有把握',profile.stakeTiers[1]],['火力全开',profile.stakeTiers[2]]])){
       const item=document.createElement('i'),small=document.createElement('small'),strong=document.createElement('strong');
       small.textContent=label;strong.textContent=`${Math.min(percent,maxStakePct)}%`;strong.dataset.noTranslate='';item.append(small,strong);ladder.append(item);
     }
@@ -324,15 +332,13 @@
   function closeEditor(){
     editor.hidden=true;editingId=null;addButton.setAttribute('aria-expanded','false');
     document.querySelector('#agent-editor-error').textContent='';
-    window.Warrior?.aiSettings?.closed();
   }
 
   function openEditor(id=null){
-    const newProvider=window.Warrior?.aiSettings?.selectedProvider()||'gpt';
     window.Warrior?.aiSettings?.open('strategy',{fromEditor:true});
     editingId=id;
     const isNew=!id,item=isNew?{}:(catalog[id]||{});
-    const provider=safeProvider(item.provider||(isNew?newProvider:id));
+    const provider=safeProvider(item.provider||(isNew?'gpt':id));
     editingProvider=provider;
     const strategy=safeStrategy(item.strategy,provider),profile=strategyFor(strategy,provider);
     document.querySelector('#save-agent').textContent=isNew?'添加 Agent':'保存设置';
@@ -363,7 +369,7 @@
     const decisionConfig={skinId:editingSkinId,decisionVariance:decision.variance,actionUrge:decision.actionUrge,emotionSensitivity:decision.emotionSensitivity,maxStakePct:decision.maxStakePct,allowAllIn:decision.allowAllIn,indicators:decision.indicators,indicatorMode:decision.indicatorMode};
     let id=editingId;
     if(!id){
-      if(list.querySelectorAll('.ai-config').length>=maxCards){document.querySelector('#agent-editor-error').textContent='当前最多添加 16 位 Agent。';return}
+      if(list.querySelectorAll('.ai-config').length>=maxCards){document.querySelector('#agent-editor-error').textContent='当前最多添加 17 位 Agent。';return}
       id=`agent-${Date.now().toString(36)}`;
       catalog[id]={name,provider,coin,strategy:strategy.key,...decisionConfig,icon:'',color:'blue-bg',action:`${coin} · 等待第一轮`,reason:strategy.description};
       createAgentCard({id,name,provider,skinId:decisionConfig.skinId,coin,strategy:strategy.key});refreshBudget();
@@ -397,7 +403,7 @@
   }
 
   // Add new built-ins without selecting them or changing the user's existing lineup.
-  for(const id of ['fengShui','diviner','czBrother','contrarian','showoff','firstLady']) {
+  for(const id of ['fengShui','diviner','czBrother','contrarian','showoff','firstLady','liangXi']) {
     const savedCustomCount=stored.agents.filter(agent=>agent.custom&&!catalog[agent.id]).length;
     if(!deletedIds.has(id)&&!list.querySelector(`[data-ai-config="${id}"]`)&&catalog[id]&&list.querySelectorAll('.ai-config').length+savedCustomCount<maxCards) {
       const card=createAgentCard({id,...catalog[id]});
@@ -426,8 +432,22 @@
   });
 
   persist();
+  // Move existing controls so checked states, settings and Agent IDs stay intact.
+  const preferredStrategies=['aggressive','liangXi','smart','contrarian','czBrother','showoff','fengShui','firstLady'];
+  const displayRank=strategy=>{
+    const index=preferredStrategies.indexOf(strategy);
+    return index<0?preferredStrategies.length:index;
+  };
+  [...list.querySelectorAll('.ai-config')]
+    .sort((a,b)=>displayRank(a.dataset.strategy)-displayRank(b.dataset.strategy))
+    .forEach(card=>list.insertBefore(card,addButton));
+  [...strategyOptions.querySelectorAll('[data-agent-strategy]')]
+    .sort((a,b)=>displayRank(a.dataset.agentStrategy)-displayRank(b.dataset.agentStrategy))
+    .forEach(button=>strategyOptions.append(button));
+  updateStrategyVisibility();
   function bindEditorOptions(){strategyOptions.querySelectorAll('[data-agent-strategy]').forEach(button=>button.onclick=()=>{
     const value=button.dataset.agentStrategy;
+    if(window.Warrior?.aiSettings?.selectStrategy){window.Warrior.aiSettings.selectStrategy(value);return;}
     setOption('strategy',value);
     editingSkinId=skinRegistry?.resolveId({strategy:value,provider:editingProvider}) || 'anime-female';
     renderStrategyAvatars();

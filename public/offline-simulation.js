@@ -4,8 +4,10 @@
   if (root) root.WarriorOfflineSimulation = exported;
 })(typeof window === 'undefined' ? null : window, () => {
   const strategyCatalog = typeof module === 'object' && module.exports ? require('./strategy-catalog') : window.WarriorStrategyCatalog;
+  const creationRequest = typeof module === 'object' && module.exports ? require('./creation-request') : window.WarriorCreationRequest;
   const VERSION = 8;
   const STORAGE_KEY = 'warrior-offline-simulation-v1';
+  const BACKUP_KEY = `${STORAGE_KEY}-backup`;
   const PERIODS = Object.freeze({'5m':5*60*1000,'15m':15*60*1000,'1h':60*60*1000,'1d':24*60*60*1000});
   const ROUND_MS = PERIODS['5m'];
   const easternFormatter = new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'});
@@ -88,7 +90,7 @@
     const fallback = defaults[index] || defaults[1];
     const strategy = normalizeStrategy(value.strategy || fallback.strategy);
     const profile = strategyCatalog.profiles[strategy];
-    const maxStakePct = Math.max(5, Math.min(profile.maxStakePct, Number(value.maxStakePct ?? fallback.maxStakePct) || fallback.maxStakePct));
+    const maxStakePct = profile.fixedStakeChoices ? 100 : Math.max(5, Math.min(profile.maxStakePct, Number(value.maxStakePct ?? fallback.maxStakePct) || fallback.maxStakePct));
     const saved = Array.isArray(value.indicators) ? [...new Set(value.indicators.filter(key=>Object.hasOwn(strategyCatalog.indicators,key)))] : null;
     const legacyCoreDefaults = strategyCatalog.coreStrategies.includes(strategy) && saved?.length===strategyCatalog.defaultIndicators.length && strategyCatalog.defaultIndicators.every(key=>saved.includes(key));
     const selected = !saved || saved.length<3 || legacyCoreDefaults ? profile.recommended : saved;
@@ -101,7 +103,7 @@
       provider: ['claude', 'gpt', 'deepseek'].includes(value.provider) ? value.provider : fallback.provider,
       coin: ['BTC','ETH','BNB'].includes(value.coin) ? value.coin : 'BTC', strategy, decisionVariance: Math.max(0, Math.min(100, Number(value.decisionVariance ?? fallback.decisionVariance) || 0)),
       actionUrge,emotionSensitivity,
-      maxStakePct, allowAllIn: profile.allowAllIn && maxStakePct === 100 && Boolean(value.allowAllIn ?? fallback.allowAllIn), indicators };
+      maxStakePct, allowAllIn: profile.allowAllIn && maxStakePct === 100 && Boolean(profile.fixedStakeChoices || (value.allowAllIn ?? fallback.allowAllIn)), indicators };
   };
   function normalizeConfig(value = {}, policies) {
     if (Object.hasOwn(value, 'agents') && (!Array.isArray(value.agents) || !value.agents.length || value.agents.length > 8)) throw new Error('INVALID_BATTLE_AGENTS');
@@ -135,19 +137,25 @@
     const clock = () => Number(now());
     const makeId = randomUUID || (() => globalThis.crypto?.randomUUID?.() || `battle-${clock()}-${Math.random().toString(16).slice(2)}`);
     const saveTarget = storage || null;
-    let state;
+    let state, storageIssue = null, lastKnownGood = null;
+    function assertStorage() { if (storageIssue) throw creationRequest.fail('OFFLINE_STORAGE_INVALID'); }
     const freshPolicies = () => defaults.map((item, index) => normalizePolicy(item, index));
     function makeAgent(policy, initialBalance) { return { id: policy.id, cash: initialBalance, reserved: 0, wins: 0, losses: 0, lastStatus: 'WAITING', lastDecision: null, orders: [], policy: clone(policy) }; }
     function makeBattle(id, name, createdAt, config) { return { id, name, createdAt, config, enabled: true, lifecycle: 'running', endReason: null, endedAt: null, roundCount: 0, nextSlot: nextStart(clock(),config.roundMs), agents: config.agents.map(agent => makeAgent(agent, config.initialBalance)) }; }
     function freshState() { const policies = freshPolicies(); const config = normalizeConfig({ agents: policies }, policies); return { version: VERSION, policies, battles: [{ id: 'default', name: 'A / B / C', createdAt: null, config, enabled: false, lifecycle: 'paused', endReason: null, endedAt: null, roundCount: 0, nextSlot: nextStart(clock(),config.roundMs), agents: config.agents.map(agent => makeAgent(agent, config.initialBalance)) }] }; }
-    function load() {
-      try {
-        const parsed = JSON.parse(saveTarget?.getItem(STORAGE_KEY) || 'null');
-        if (![1,2,3,4,5,6,7,VERSION].includes(parsed?.version) || !Array.isArray(parsed.battles) || !parsed.battles.length || parsed.battles[0]?.id !== 'default') return freshState();
+    function decode(raw) {
+        const parsed = JSON.parse(raw);
+        if (![1,2,3,4,5,6,7,VERSION].includes(parsed?.version) || !Array.isArray(parsed.battles) || !parsed.battles.length || parsed.battles[0]?.id !== 'default') throw new Error('INVALID_OFFLINE_LEDGER');
+        if (new Set(parsed.battles.map(b => b.id)).size !== parsed.battles.length) throw new Error('INVALID_OFFLINE_LEDGER');
         parsed.version = VERSION;
         parsed.policies = slots.map((_, index) => normalizePolicy(parsed.policies?.[index], index));
         parsed.battles.forEach(battle => {
+          if (typeof battle.id !== 'string' || !Array.isArray(battle.agents) || battle.agents.some(a =>
+            !Number.isFinite(a.cash) || a.cash < 0 || !Array.isArray(a.orders) ||
+            a.orders.some(o => !Number.isFinite(o.amount) || o.amount <= 0 || !Number.isFinite(o.start) || !Number.isFinite(o.end) ||
+              !['OPEN','WON','LOST','SPLIT','CANCELLED'].includes(o.status) || !Number.isFinite(o.quote?.odds)))) throw new Error('INVALID_OFFLINE_LEDGER');
           battle.config = normalizeConfig(battle.config || { agents: parsed.policies }, parsed.policies);
+          if (battle.config.agents.length !== battle.agents.length || battle.config.agents.some(p => !battle.agents.some(a => a.id === p.id))) throw new Error('INVALID_OFFLINE_LEDGER');
           battle.enabled = false; // Reopening never resumes unattended battles.
           if (battle.lifecycle === 'running') battle.lifecycle = 'paused';
           battle.lifecycle = battle.lifecycle || (battle.enabled ? 'running' : 'paused');
@@ -159,14 +167,52 @@
           if (!validBoundary) battle.nextSlot = nextStart(clock(),battle.config.roundMs);
           battle.agents = battle.config.agents.map((policy, index) => {
             const saved = battle.agents?.find(agent => agent.id === policy.id) || {};
-            return { id: policy.id, cash: Math.max(0, Number(saved.cash) || 0), addedCapital:saved.addedCapital||0, topUps:saved.topUps||[], reserved: Math.max(0, Number(saved.reserved) || 0), wins: Math.max(0, Number(saved.wins) || 0), losses: Math.max(0, Number(saved.losses) || 0), lastStatus: saved.lastStatus || 'WAITING', lastDecision: saved.lastDecision || null, orders: Array.isArray(saved.orders) ? saved.orders : [], policy: clone(policy) };
+            return { id: policy.id, cash: Math.max(0, Number(saved.cash) || 0), capitalRecovery:saved.capitalRecovery===true, addedCapital:saved.addedCapital||0, topUps:saved.topUps||[], reserved: Math.max(0, Number(saved.reserved) || 0), wins: Math.max(0, Number(saved.wins) || 0), losses: Math.max(0, Number(saved.losses) || 0), lastStatus: saved.lastStatus || 'WAITING', lastDecision: saved.lastDecision || null, orders: Array.isArray(saved.orders) ? saved.orders : [], policy: clone(policy) };
           });
         });
         return parsed;
-      } catch { return freshState(); }
+    }
+    function load() {
+      try {
+        const raw = saveTarget?.getItem(STORAGE_KEY) ?? null;
+        const parsed = raw === null ? freshState() : decode(raw);
+        lastKnownGood = raw; storageIssue = null;
+        return parsed;
+      } catch {
+        storageIssue = { code: 'OFFLINE_STORAGE_INVALID' };
+        const empty = freshState(); empty.battles[0].placeholder = true;
+        return empty;
+      }
+    }
+    function storageStatus() {
+      if (!storageIssue) return null;
+      let backupAvailable = false;
+      try { const raw = saveTarget?.getItem(BACKUP_KEY); if (raw) { decode(raw); backupAvailable = true; } } catch {}
+      return { ...storageIssue, backupAvailable };
+    }
+    function recoverStorage(action) {
+      if (!storageIssue) return snapshot();
+      if (action === 'retry') { state = load(); return snapshot(); }
+      if (!['backup', 'reset'].includes(action)) throw creationRequest.fail('INVALID_STORAGE_RECOVERY');
+      // Read before writing: unreadable storage can never be reset by accident.
+      const raw = saveTarget.getItem(STORAGE_KEY);
+      const next = action === 'backup' ? decode(saveTarget.getItem(BACKUP_KEY)) : freshState();
+      if (action === 'reset') next.battles[0].placeholder = true;
+      const serialized = JSON.stringify(next);
+      // Exact damaged bytes remain available even after an explicit reset/restore.
+      if (raw !== null) saveTarget.setItem(`${STORAGE_KEY}-damaged-${makeId()}`, raw);
+      saveTarget.setItem(STORAGE_KEY, serialized);
+      state = next; lastKnownGood = serialized; storageIssue = null;
+      return snapshot();
     }
     function persist() {
-      try { saveTarget?.setItem(STORAGE_KEY, JSON.stringify(state)); }
+      assertStorage();
+      try {
+        const serialized = JSON.stringify(state);
+        if (lastKnownGood && lastKnownGood !== serialized) saveTarget?.setItem(BACKUP_KEY, lastKnownGood);
+        saveTarget?.setItem(STORAGE_KEY, serialized);
+        lastKnownGood = serialized;
+      }
       catch {
         for (const battle of state.battles) if (battle.enabled) {
           battle.enabled = false; battle.lifecycle = 'paused'; battle.endReason = 'STORAGE_ERROR';
@@ -174,7 +220,7 @@
         throw new Error('STORAGE_ERROR');
       }
     }
-    function findBattle(id = 'default') { const battle = state.battles.find(item => item.id === id); if (!battle) { const error = new Error('Battle not found'); error.status = 404; error.code = 'BATTLE_NOT_FOUND'; throw error; } return battle; }
+    function findBattle(id = 'default') { assertStorage(); const battle = state.battles.find(item => item.id === id); if (!battle) { const error = new Error('Battle not found'); error.status = 404; error.code = 'BATTLE_NOT_FOUND'; throw error; } return battle; }
     function currentStreaks(agent) {
       let winStreak=0,lossStreak=0;
       for(const order of [...agent.orders].reverse()) {
@@ -184,7 +230,7 @@
       }
       return {winStreak,lossStreak};
     }
-    function settleOpenOrders(battle, timestamp) { battle.agents.forEach(agent => { const order = agent.orders.at(-1); if (!order || order.status !== 'OPEN' || order.end > timestamp) return; const outcome = unit(`${battle.id}:${order.start}:market`) >= 0.5 ? 'UP' : 'DOWN'; order.outcome = outcome; order.settledAt = timestamp; agent.reserved = money(Math.max(0, agent.reserved - order.amount)); if (order.direction === outcome) { order.status = 'WON'; agent.cash = money(agent.cash + order.amount * order.quote.odds); agent.wins += 1; } else { order.status = 'LOST'; agent.losses += 1; } agent.lastStatus = order.status; }); }
+    function settleOpenOrders(battle, timestamp) { battle.agents.forEach(agent => { const order = agent.orders.at(-1); if (!order || order.status !== 'OPEN' || order.end > timestamp) return; const outcome = unit(`${battle.id}:${order.start}:market`) >= 0.5 ? 'UP' : 'DOWN'; order.outcome = outcome; order.settledAt = timestamp; agent.reserved = money(Math.max(0, agent.reserved - order.amount)); if (order.direction === outcome) { order.status = 'WON'; order.payout=order.amount*order.quote.odds; agent.cash = money(agent.cash + order.payout); agent.wins += 1; } else { order.status = 'LOST'; order.payout=0; agent.losses += 1; } agent.lastStatus = order.status; }); }
 
     function finish(battle, reason) {
       if (['ended', 'settling'].includes(battle.lifecycle)) return;
@@ -211,27 +257,33 @@
         if(!strategyCatalog.coreStrategies.includes(policy.strategy)&&!strategyCatalog.characterStrategies.includes(policy.strategy)&&!strategyCatalog.divinationStrategies.includes(policy.strategy)&&policy.strategy!=='priceAction') {
           agent.lastStatus='SKIPPED';agent.lastDecision={roundId:String(start),action:'SKIP',direction:null,stakeUsdt:0,confidence:0,riskMode:'WAIT',reason:'新策略需要真实指标，离线演示不生成信号。'};return;
         }
+        const initialBalance=battle.config.initialBalance+(agent.addedCapital||0);
+        const capital=strategyCatalog.capitalManagement({strategy:policy.strategy,balance:agent.cash,initialBalance,openStake:agent.reserved||0,recoveryActive:agent.capitalRecovery});
+        agent.capitalRecovery=capital.recoveryActive;
         const streaks=currentStreaks(agent);
         const actionUrge=strategyCatalog.effectiveActionUrge(policy.actionUrge,battle.config.actionUrgeLevel);
         const emotion=strategyCatalog.emotionAdjustment({strategy:policy.strategy,actionUrge,emotionSensitivity:policy.emotionSensitivity,battleEmotion:battle.config.emotionLevel,...streaks});
-        const peers=strategyCatalog.peerSnapshot(battle.agents,start,battle.config.asset,clock());
-        const signal=strategyCatalog.evaluateCharacter(policy.strategy,snapshot,actionUrge,{asset:battle.config.asset,roundId:start,agentId:agent.id,peers})||strategyCatalog.evaluateDivination(policy.strategy,{...snapshot,marketOdds:{up:upOdds,down:downOdds}},{roundId:start,asset:battle.config.asset})||strategyCatalog.evaluatePriceAction(policy.strategy,snapshot.candles,actionUrge)||strategyCatalog.evaluateCoreStrategy(policy.strategy,snapshot,actionUrge),direction=signal.score>=0?'UP':'DOWN';
+        const peers=strategyCatalog.peerSnapshot(battle.agents,start,battle.config.asset,clock(),battle.config.initialBalance);
+        const signal=strategyCatalog.evaluateCharacter(policy.strategy,snapshot,actionUrge,{asset:battle.config.asset,roundId:start,agentId:agent.id,peers})||strategyCatalog.evaluateDivination(policy.strategy,{...snapshot,marketOdds:{up:upOdds,down:downOdds}},{roundId:start,asset:battle.config.asset,actionUrge})||strategyCatalog.evaluatePriceAction(policy.strategy,snapshot.candles,actionUrge)||strategyCatalog.evaluateCoreStrategy(policy.strategy,snapshot,actionUrge),direction=signal.score>=0?'UP':'DOWN';
         const baseConfidence=strategyCatalog.confidenceForScore(signal.score,policy.decisionVariance,policy.strategy),nudge=strategyCatalog.personalityNudge({strategy:policy.strategy,agentId:agent.id,roundId:start,variance:policy.decisionVariance,confidence:baseConfidence,minimumConfidence:emotion.minimumConfidence}),confidence=Math.max(50,Math.min(97,baseConfidence+nudge)),odds=direction==='UP'?upOdds:downOdds,edge=confidence/100*odds-1;
         const oracle=signal.divination;
         const oracleResult=verdict=>oracle?{divination:{...oracle,interpretation:strategyCatalog.formatDivination(oracle),finalVerdict:verdict},warnings:['ENTERTAINMENT_ONLY']}:{};
         const factors=[...signal.factors,{name:'emotion',value:`${emotion.state}:${emotion.streak}; own=${emotion.sensitivity}; arena=${emotion.battleEmotion}; stake=x${emotion.stakeMultiplier.toFixed(3)}; min_confidence=${emotion.minimumConfidence.toFixed(2)}`,impact:'NEUTRAL'},{name:'personality_nudge',value:nudge.toFixed(3),impact:'NEUTRAL'}];
-        if(Math.abs(signal.score)<1.5||confidence<emotion.minimumConfidence||edge<=0||agent.cash<0.01) {
+        if(Math.abs(signal.score)<2.4-actionUrge*.014||confidence<emotion.minimumConfidence||edge<=0||agent.cash<0.01) {
           agent.lastStatus=agent.cash<0.01?'INSUFFICIENT_FUNDS':'SKIPPED';agent.lastDecision={roundId:String(start),action:'SKIP',direction:null,stakeUsdt:0,confidence:Math.round(confidence),riskMode:'WAIT',reason:'模拟指标没有通过策略与情绪门槛',factors,indicators:clone(snapshot),...(strategyCatalog.characterStrategies.includes(policy.strategy)?{peers:clone(peers)}:{}),...oracleResult('WAIT')};return;
         }
-        let percent=strategyCatalog.normalStakePercent({strategy:policy.strategy,baseStakePct:profile.baseStakePct,maxStakePct:policy.maxStakePct,confidence,edge,...streaks,emotionSensitivity:policy.emotionSensitivity,battleEmotion:battle.config.emotionLevel});
-        let riskMode=emotion.streak&&emotion.stakeMultiplier>1.001?'ADD_ON':'NORMAL';
-        const allIn=policy.allowAllIn&&policy.maxStakePct===100&&confidence>=profile.allInConfidence&&edge>=0.2&&strategyCatalog.strongCoreConsensus(snapshot,direction,policy.strategy)&&(policy.strategy==='smart'||streaks.lossStreak>=2);
-        if(allIn){percent=100;riskMode='ALL_IN';}
-        const amount=money(Math.min(agent.cash,Math.max(0.01,agent.cash*percent/100)));
+        const collective=policy.strategy==='contrarian'?strategyCatalog.eligibleCountertradePeers(policy.strategy,actionUrge,{agentId:agent.id,roundId:start,asset:battle.config.asset,peers}):null;
+        let percent=strategyCatalog.normalStakePercent({countertradeMultiplier:collective?.stakeMultiplier??1,strategy:policy.strategy,baseStakePct:profile.baseStakePct,maxStakePct:policy.maxStakePct,balance:agent.cash,initialBalance,openStake:agent.reserved||0,recoveryActive:capital.recoveryActive,confidence,edge,...streaks,emotionSensitivity:policy.emotionSensitivity,battleEmotion:battle.config.emotionLevel});
+        if(signal.probe&&!capital.recoveryActive)percent=Math.min(percent,strategyCatalog.probeStakePercent({strategy:policy.strategy,maxStakePct:policy.maxStakePct,balance:agent.cash,initialBalance,openStake:agent.reserved||0,battleEmotion:battle.config.emotionLevel}));
+        let riskMode=policy.strategy!=='liangXi'&&(collective?.stakeMultiplier>1||!signal.probe&&emotion.streak&&emotion.stakeMultiplier>1.001)?'ADD_ON':'NORMAL';
+        const allIn=!signal.probe&&policy.allowAllIn&&policy.maxStakePct===100&&confidence>=profile.allInConfidence&&edge>=0.2&&strategyCatalog.strongCoreConsensus(snapshot,direction,policy.strategy)&&(['smart','liangXi'].includes(policy.strategy)||streaks.lossStreak>=2);
+        if(allIn||capital.recoveryActive){percent=100;riskMode='ALL_IN';}
+        const amount=Math.floor(agent.cash*percent+1e-8)/100;
+        if(amount<(capital.recoveryActive?.01:strategyCatalog.MIN_STAKE)){agent.lastStatus='INSUFFICIENT_FUNDS';agent.lastDecision={roundId:String(start),action:'SKIP',direction:null,stakeUsdt:0,riskMode:'WAIT',reason:'下注金额低于最低 5U',capitalManagement:capital};return;}
         const emotionText=emotion.state==='neutral'||emotion.sensitivity===0?'':emotion.state==='win'?(emotion.stakeMultiplier>1.001?'；连胜情绪加码':'；连胜后仍保持冷静'):(emotion.stakeMultiplier>1.001?'；连败后更想翻本':'；连败情绪缩注');
-        const reason=(oracle?`${strategyCatalog.formatDivination(oracle)}；卦牌与指标同向，小注试势`:policy.strategy==='priceAction'?'只看开高低收，裸K形态同向':policy.strategy==='smart'?`先判断${signal.regime==='trend'?'趋势局':'震荡局'}，再按优势调整金额`:policy.strategy==='conservative'?'波动和价差安全，趋势与盘口全部同向，只押小注':'短线、动量和主动买卖同向')+emotionText;
+        const reason=(policy.strategy==='contrarian'?(collective?.stakeMultiplier>1?'多人亏损且方向一致，反向加码':'综合对手历史亏损与本轮方向，反向下注'):oracle?`${strategyCatalog.formatDivination(oracle)}；卦牌与指标同向，小注试势`:policy.strategy==='priceAction'?'只看开高低收，裸K形态同向':policy.strategy==='smart'?`先判断${signal.regime==='trend'?'趋势局':'震荡局'}，再按优势调整金额`:policy.strategy==='conservative'?'波动和价差安全，趋势与盘口全部同向，只押小注':'短线、动量和主动买卖同向')+emotionText;
         const order={id:`${battle.id}-${start}-${agent.id}`,start,end:nextStart(start,roundMs),direction,amount,status:'OPEN',quote:{odds,source:'offline-simulated'},indicators:clone(snapshot)};
-        agent.cash=money(agent.cash-amount);agent.reserved=money(agent.reserved+amount);agent.orders.push(order);agent.lastStatus='OPEN';agent.lastDecision={roundId:String(start),action:'BET',direction,stakeUsdt:amount,stakePct:amount/(amount+agent.cash)*100,confidence:Math.round(confidence),riskMode,reason,factors,indicators:clone(snapshot),...(strategyCatalog.characterStrategies.includes(policy.strategy)?{peers:clone(peers)}:{}),...oracleResult(direction)};
+        agent.cash=money(agent.cash-amount);agent.reserved=money(agent.reserved+amount);agent.orders.push(order);agent.lastStatus='OPEN';agent.lastDecision={roundId:String(start),action:'BET',direction,stakeUsdt:amount,stakePct:amount/(amount+agent.cash)*100,confidence:Math.round(confidence),riskMode,capitalManagement:capital,reason:capital.recoveryActive?'搏命梭哈：继续全押，直到回本。':capital.stakeMultiplier<1?'本金已增长，按保守规则减少下注。':reason,factors,indicators:clone(snapshot),...(strategyCatalog.characterStrategies.includes(policy.strategy)?{peers:clone(peers)}:{}),...oracleResult(direction)};
       });
     }
     function advance(battle) {
@@ -262,6 +314,7 @@
         endedAt: battle.endedAt, endReason: battle.endReason, agents: battle.agents.map(publicAgent) };
     }
     function snapshot(id = 'default') {
+      if (storageIssue) return { ...publicSnapshot(state.battles[0]), placeholder: true, agents: [], initialTotal: 0, error: storageIssue.code, storageIssue: storageStatus() };
       const battle = findBattle(id);
       advance(battle);
       return clone(battle.report || publicSnapshot(battle));
@@ -289,7 +342,24 @@
       }
       return clone(publicSnapshot(battle));
     }
-    function create(name, config = {}) { const value = String(name || '').trim(); if (!value || value.length > 40) throw new Error('Name must contain 1–40 characters'); const battleConfig = normalizeConfig(config, state.policies); const battle = makeBattle(makeId(), value, clock(), battleConfig); state.battles.push(battle); persist(); return snapshot(battle.id); }
+    function create(name, config = {}, requestId = null) {
+      assertStorage();
+      const { fingerprint, prior } = creationRequest.lookup(state.creationRequests || {}, requestId, name, config);
+      if (prior) {
+        if (!state.battles.some(b => b.id === prior.battleId && !b.placeholder)) throw creationRequest.fail('BATTLE_CREATION_RETIRED');
+        return snapshot(prior.battleId);
+      }
+      const value = String(name || '').trim();
+      if (!value || value.length > 40) throw new Error('Name must contain 1–40 characters');
+      if (typeof (config.initialBalance ?? config.budget) === 'number' && (config.initialBalance ?? config.budget) < 10) throw creationRequest.fail('INVALID_BATTLE_BUDGET');
+      const battleConfig = normalizeConfig(config, state.policies);
+      if (battleConfig.initialBalance < 10) throw creationRequest.fail('INVALID_BATTLE_BUDGET');
+      const before = clone(state), battle = makeBattle(makeId(), value, clock(), battleConfig);
+      state.battles.push(battle);
+      if (requestId) state.creationRequests = { ...state.creationRequests, [requestId]: { battleId: battle.id, signature: fingerprint } };
+      try { persist(); } catch (error) { state = before; for (const b of state.battles) if (b.enabled) { b.enabled = false; b.lifecycle = 'paused'; b.endReason = 'STORAGE_ERROR'; } throw error; }
+      return snapshot(battle.id);
+    }
     function setEnabled(id, enabled) {
       const battle = findBattle(id);
       if (battle.placeholder && enabled) throw new Error('CREATE_BATTLE_FIRST');
@@ -340,8 +410,10 @@
       return { battles: list(), leaderboard: leaderboard().filter(row => !findBattle(row.battleId).placeholder) };
     }
     function reset() {
+      assertStorage();
       const previous = state;
       const next = freshState();
+      next.creationRequests = clone(state.creationRequests || {});
       next.policies = clone(state.policies);
       next.battles[0].config = normalizeConfig({}, next.policies);
       next.battles[0].agents = next.policies.map(policy => makeAgent(policy, 100));
@@ -352,9 +424,9 @@
       state = next;
       return snapshot();
     }
-    function setStrategies(agents) { state.policies = slots.map((_, index) => normalizePolicy(Array.isArray(agents) ? agents[index] : undefined, index)); persist(); return getStrategies(); }
+    function setStrategies(agents) { assertStorage(); state.policies = slots.map((_, index) => normalizePolicy(Array.isArray(agents) ? agents[index] : undefined, index)); persist(); return getStrategies(); }
     state = load();
-    return { mode: 'offline', snapshot, list, create, reset, remove, topUp, setEnabled, setEmotion, setActionUrge, end, leaderboard: () => leaderboard().filter(row => !findBattle(row.battleId).placeholder), getStrategies, setStrategies, indicators(symbol = 'BTCUSDT') { return simulatedIndicatorSnapshot('standalone',currentStart(clock()),symbol); }, clear() { state = freshState(); persist(); return snapshot(); } };
+    return { mode: 'offline', snapshot, list, create, reset, remove, topUp, setEnabled, setEmotion, setActionUrge, end, storageStatus, recoverStorage, leaderboard: () => leaderboard().filter(row => !findBattle(row.battleId).placeholder), getStrategies, setStrategies, indicators(symbol = 'BTCUSDT') { return simulatedIndicatorSnapshot('standalone',currentStart(clock()),symbol); }, clear() { return reset(); } };
   }
   return { PERIODS, ROUND_MS, STORAGE_KEY, simulatedIndicatorSnapshot, createOfflineSimulation };
 });

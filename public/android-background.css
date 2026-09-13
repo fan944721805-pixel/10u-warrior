@@ -1,0 +1,10 @@
+.android-background { border-top: 1px solid #ccb5dd; padding-top: 16px; margin-top: 16px; }
+.android-background h3 { margin: 0 0 8px; font-size: 17px; color: #58336f; }
+.android-background p { margin: 8px 0; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.android-background-status { color: #62457b; }
+.android-background-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.android-background-actions button { min-height: 48px; flex: 1 1 150px; white-space: normal; }
+#android-background-prompt { width: min(460px, calc(100vw - 32px)); box-sizing: border-box; max-height: calc(100dvh - 48px); overflow: auto; padding: 24px; margin: auto; inset: 0; border-radius: 24px; }
+#android-background-prompt h2 { margin: 0 0 16px; font-size: 22px; }
+#android-background-prompt p { font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
+#android-background-prompt .android-background-dismiss { width: 100%; min-height: 48px; margin-top: 8px; }

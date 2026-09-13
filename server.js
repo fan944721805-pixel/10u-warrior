@@ -561,6 +561,7 @@ function createWarriorServer(options = {}) {
         const body = await readJson(request);
         if (url.pathname === '/api/ai/connections' || url.pathname === '/api/ai/connections/test') return sendJson(response, 200, await aiConnections.save(body, url.pathname.endsWith('/test')));
         if (url.pathname === '/api/ai/connections/remove') return sendJson(response, 200, aiConnections.remove(body.provider));
+        if (url.pathname === '/api/ai/connections/check') return sendJson(response, 200, await aiConnections.testConnection(body.provider, body.revision));
         if (url.pathname === '/api/ai/assignments') return sendJson(response, 200, aiConnections.assign(body.strategy, body.connectionId));
         if (url.pathname === '/api/ai/preview') {
           if (!Object.hasOwn(require('./public/strategy-catalog').profiles, body.strategy)) throw appError('Invalid strategy', 422, 'AI_STRATEGY_INVALID');
@@ -569,12 +570,15 @@ function createWarriorServer(options = {}) {
           const time = (options.now || Date.now)();
           const input = buildDecisionContext({ market:{roundId:`preview-${time}`,timeframe:'5m',secondsToClose:300,upOdds:2,downOdds:2,dataTimestamp:indicators.dataTimestamp}, indicators, policy:previewPolicy,
             account:{balance:100,initialBalance:100,wins:0,losses:0,winStreak:0,lossStreak:0,openStake:0} });
-          const raw = await decisionProvider.decide(input, {deadlineMs:time+10000,now:options.now||Date.now});
+          const engine=decisionProvider.describeFor(input);
+          if(!['mock','off','offline','legacy'].includes(engine.mode))input.policy.review_mode='model';
+          let modelRequest=null;
+          const raw = await decisionProvider.decide(input, {deadlineMs:time+10000,now:options.now||Date.now,onRequest:request=>{modelRequest=request;}});
           let plan, rejection = null;
           try { plan = validateDecision(raw,{input,indicators,policy:previewPolicy,now:(options.now||Date.now)()}); }
           catch(e) { rejection = e.code || 'AI_RESPONSE_INVALID'; }
           return sendJson(response,200,{mode:'preview',ordersCreated:0,assumptions:{balance:100,upOdds:2,downOdds:2,maxStakePct:10},
-            engine:decisionProvider.describeFor(input),raw,plan:plan||null,rejection,
+            engine:decisionProvider.describeFor(input),raw,plan:plan||null,rejection,modelRequest,
             ...(plan?{audit:decisionAudit({provider:decisionProvider,input,plan,indicators,raw})}:{})});
         }
       }
@@ -650,7 +654,7 @@ function createWarriorServer(options = {}) {
     }
     if (request.method === 'GET' && url.pathname === '/api/simulation/strategies') {
       const catalog = require('./public/strategy-catalog');
-      return sendJson(response, 200, { ...simulation.getStrategies(), capabilities: { version: 8, aiPerBattleModels:true, strategies: Object.keys(catalog.profiles), indicators: Object.keys(catalog.indicators), assets: ['BTC', 'ETH', 'BNB'], periods: ['5m', '15m', '1h', '1d'], streakEmotion: true, battleEmotion: true, actionUrge: true, battleActionUrge: true, priceActionCandles: true, realtimeEntry: true } });
+      return sendJson(response, 200, { ...simulation.getStrategies(), capabilities: { version: 8, idempotentCreation: true, minInitialBalance: 10, aiPerBattleModels:true, strategies: Object.keys(catalog.profiles), indicators: Object.keys(catalog.indicators), assets: ['BTC', 'ETH', 'BNB'], periods: ['5m', '15m', '1h', '1d'], streakEmotion: true, battleEmotion: true, actionUrge: true, battleActionUrge: true, priceActionCandles: true, realtimeEntry: true } });
     }
     if (request.method === 'POST' && url.pathname === '/api/simulation/strategies') {
       assertSameOrigin(request);
@@ -673,13 +677,24 @@ function createWarriorServer(options = {}) {
     if (request.method === 'POST' && url.pathname === '/api/simulation/battles') {
       assertSameOrigin(request);
       const body = await readJson(request);
+      const prior = simulation.findCreation?.(body.requestId, body.name, body.config || {});
+      if (prior) return sendJson(response, 200, prior);
       aiConnections.assertAgents(body.config?.agents);
-      return sendJson(response, 201, simulation.create(body.name, body.config || {}, body.clientId || null));
+      return sendJson(response, 201, simulation.create(body.name, body.config || {}, body.clientId || null, body.requestId));
     }
     if (request.method === 'POST' && url.pathname === '/api/simulation/control') {
       assertSameOrigin(request);
       const body = await readJson(request);
       if (typeof body.enabled !== 'boolean') throw appError('enabled must be boolean');
+      if (body.enabled) {
+        const battle = simulation.snapshot(body.battleId || 'default');
+        if (battle.aiConnectionFailure) {
+          const agents = battle.config.agents;
+          aiConnections.assertAgents(agents);
+          const connections = new Map(agents.filter(a => a.aiConnectionId && a.aiConnectionId !== 'none').map(a => [a.aiConnectionId, a.aiConnectionRevision]));
+          for (const [id, revision] of connections) await aiConnections.testConnection(id, revision);
+        }
+      }
       if (body.clientId) simulation.touch(body.battleId || 'default');
       return sendJson(response, 200, simulation.setEnabled(body.enabled, body.battleId || 'default'));
     }

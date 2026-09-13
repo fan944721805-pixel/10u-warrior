@@ -66,10 +66,8 @@ const { createWarriorServer } = require('../server');
       }
     }
     // User pause remains intentional even when an explicit retry succeeds.
-    await page.locator('#battle-settings-open').click();
     await page.locator('#pause').click();
     await page.waitForFunction(()=>window.Warrior.state.simulation.enabled===false);
-    await page.keyboard.press('Escape');
     assert.ok((await page.locator('.recovery-resume').innerText()).includes('Betting stays paused'));
     await page.locator('.recovery-retry').click();
     await page.waitForFunction(()=>window.Warrior.state.simulation.recovery?.attempts===0);

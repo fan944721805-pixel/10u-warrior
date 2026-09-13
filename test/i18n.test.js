@@ -22,7 +22,7 @@ test('dynamic translations keep numeric values, names and market symbols intact'
   assert.equal(translate('BTC 看涨 · 12.75U','ja'),'BTC 上昇 · 12.75U');
   assert.equal(translate('小明の전략 Agent 设置已保存','ko'),'小明の전략 Agent 설정 저장 완료');
   assert.equal(translate('战场 Agent 设置已保存','ja'),'战场 Agent 設定を保存しました');
-  assert.equal(translate('赌狗 Agent 设置已保存','ja'),`${translate('赌狗','ja')} Agent 設定を保存しました`);
+  assert.equal(translate('10U战神 Agent 设置已保存','ja'),`${translate('10U战神','ja')} Agent 設定を保存しました`);
   assert.equal(translate('起步 8%','ja'),'開始 8%');
   assert.equal(translate('最多 15%','ko'),'최대 15%');
   assert.equal(translate('3 个已配置','ja'),'3 件設定済み');

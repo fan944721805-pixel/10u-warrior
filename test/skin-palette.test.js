@@ -15,7 +15,7 @@ test('bundled skins resolve to existing assets and retain saved skin IDs across 
     return window.Warrior.skins;
   };
   const registry = load(), bundled = registry.list().filter(skin=>skin.bundled);
-  assert.equal(bundled.length,18);
+  assert.equal(bundled.length,19);
   for(const skin of bundled) {
     assert.ok(fs.existsSync(path.join(__dirname,'../public',skin.imageUrl)));
     assert.equal(load().normalizeId(skin.id),skin.id);
@@ -41,7 +41,7 @@ test('all avatar surfaces resolve legacy defaults by strategy and preserve expli
   const registry=window.Warrior.skins;
   const strategies={aggressive:'rider',smart:'super-ai',conservative:'miser',trendFollowing:'trend-chaser',meanReversion:'bottom-top-hunter',priceAction:'candlestick-bro',breakout:'rocket-bro',orderFlow:'whale-detective',volatilityGuard:'steady-dog',consensus:'six-vote-warrior'};
   const element=()=>({dataset:{},style:{removeProperty(){},setProperty(){}}});
-  Object.assign(strategies,{fengShui:'feng-shui-master',diviner:'diviner'});
+  Object.assign(strategies,{fengShui:'feng-shui-master',diviner:'diviner',liangXi:'liang-xi'});
   for(const [strategy,borrowed] of Object.entries({fengShui:'buffett',diviner:'six-vote-warrior'})){
     assert.equal(registry.resolveId({strategy,skinId:`generated-bundled-${borrowed}`}),`generated-bundled-${strategies[strategy]}`);
     assert.equal(registry.resolveId({strategy,skinId:`chosen:generated-bundled-${borrowed}`}),`chosen:generated-bundled-${borrowed}`);

@@ -45,7 +45,7 @@ function fixture() {
     spotOrderBookImbalance: .3, spread: { basisPoints: 1 }, longReturns: { fifteenMinutes: .3, sixtyMinutes: 1 },
   }) };
   const decisionProvider = { describe: () => ({ mode: 'mock', simulated: true }), decide: async input => ({
-    round_id: input.market.round_id, action: 'BET', direction: 'UP', stake_usdt: 1, stake_pct: 100 / input.account.balance,
+    round_id: input.market.round_id, action: 'BET', direction: 'UP', stake_usdt: 5, stake_pct: 500 / input.account.balance,
     confidence: 90, risk_mode: 'NORMAL', factors: [], reason: 'TEST_FIXTURE', data_fresh: true, warnings: [],
   }) };
   return { slot, now, calls, fetches, source, run, fetchImpl, official, policy, indicatorSource, decisionProvider,

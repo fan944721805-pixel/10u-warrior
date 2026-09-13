@@ -1,6 +1,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const creationRequest = require('./public/creation-request');
+const { atomicWriteJson } = require('./atomic-json');
 const { PERIODS, createPredictionSimulation } = require('./prediction-sim');
 const { normalizeAgentPolicies, normalizePolicy } = require('./ai-decision');
 
@@ -91,7 +93,41 @@ function normalizeBattleConfig(value = {}, currentPolicies = normalizeAgentPolic
 }
 
 function createSimulationBattles({ source, indicatorSource, decisionProvider, file, now = Date.now, leaseEnabled = true, pauseOnRestore = false, pauseOnError = false }) {
-  const sharedDecisionProvider=limitExternalDecisionProvider(decisionProvider);
+  const { CONNECTION_FAILURES } = require('./ai-connections');
+  const observations = new Map();
+  let outage = null;
+  function observe(input, options, cause) {
+    if (outage || options.isCancelled?.()) return;
+    for (const [key, value] of observations) if (now() - value.at > 60000) observations.delete(key);
+    const key = JSON.stringify([options.battleId, input.policy.agent_id, input.market.round_id, input.market.data_timestamp]);
+    observations.set(key, { at: now(), failed: Boolean(cause) });
+    const failures = [...observations.values()].filter(value => value.failed).length;
+    if (!cause || failures < 3 || failures / observations.size < 0.6) return;
+    outage = { id: crypto.randomUUID(), at: now(), code: cause.code, failures, reviews: observations.size };
+    // Invalidate all outstanding decisions before they can create an order.
+    // Attempt every pause even if one ledger cannot be saved.
+    for (const sim of simulations.values()) {
+      try { sim.pauseForAiOutage(outage); } catch { /* The ledger fails closed itself. */ }
+    }
+    emitChange({ battleId: '*', reason: 'ai-connection-outage', aiConnectionFailure: outage });
+  }
+  const supervisedProvider = decisionProvider?.decide ? {
+    describe: () => decisionProvider.describe(),
+    describeFor: input => decisionProvider.describeFor?.(input) || decisionProvider.describe(),
+    async decide(input, options = {}) {
+      const info = this.describeFor(input);
+      if (['mock','off','offline','legacy'].includes(info.mode)) return decisionProvider.decide(input, options);
+      try {
+        const raw = await decisionProvider.decide(input, { ...options, onConnectionFailure: cause => observe(input, options, cause) });
+        observe(input, options, null);
+        return raw;
+      } catch (cause) {
+        if (CONNECTION_FAILURES.has(cause.code)) observe(input, options, cause);
+        throw cause;
+      }
+    },
+  } : decisionProvider;
+  const sharedDecisionProvider=limitExternalDecisionProvider(supervisedProvider);
   const registryFile = file && path.join(path.dirname(file), 'simulation-battles.json');
   const strategyFile = file && path.join(path.dirname(file), 'simulation-strategies.json');
   let policies = normalizeAgentPolicies();
@@ -102,12 +138,14 @@ function createSimulationBattles({ source, indicatorSource, decisionProvider, fi
   }
 
   let records = [{ id: 'default', name: 'A / B / C', createdAt: null, config: normalizeBattleConfig({}, policies) }];
+  let creationRequests = {};
   if (registryFile && fs.existsSync(registryFile)) {
     const data = JSON.parse(fs.readFileSync(registryFile, 'utf8'));
     if (data.version !== 1 || !Array.isArray(data.battles) || data.battles[0]?.id !== 'default' ||
       new Set(data.battles.map(b => b.id)).size !== data.battles.length ||
       data.battles.some(b => !/^(default|[a-f0-9-]{36})$/.test(b.id) || typeof b.name !== 'string')) throw new Error('INVALID_BATTLE_REGISTRY');
     records = data.battles.map(record => ({ ...record, config: normalizeBattleConfig(record.config, policies) }));
+    creationRequests = data.creationRequests || {};
   }
 
   const pending = new Map();
@@ -130,7 +168,9 @@ function createSimulationBattles({ source, indicatorSource, decisionProvider, fi
   const makeSimulation = record => {
     const config = normalizeBattleConfig(record.config, policies);
     const policyMap = new Map(config.agents.map(agent => [agent.id, agent]));
-    return createPredictionSimulation({ source: shared, indicatorSource, decisionProvider:sharedDecisionProvider,
+    const battleProvider = sharedDecisionProvider && { ...sharedDecisionProvider,
+      decide: (input, options) => sharedDecisionProvider.decide(input, { ...options, battleId: record.id }) };
+    return createPredictionSimulation({ source: shared, indicatorSource, decisionProvider:battleProvider,
       policyFor: id => policyMap.get(id), agentPolicies: config.agents,
       initialBalance: config.initialBalance, maxRounds: config.rounds, asset: config.asset, period: config.period, emotionLevel: config.emotionLevel, actionUrgeLevel: config.actionUrgeLevel, realtimeEntry: config.realtimeEntry,
       file: ledgerFile(record.id), now, leaseEnabled, pauseOnRestore, pauseOnError, enabled: record.id !== 'default' || (!leaseEnabled && !pauseOnRestore),
@@ -160,20 +200,32 @@ function createSimulationBattles({ source, indicatorSource, decisionProvider, fi
   }
   function list() { return records.map(record => snapshot(record.id)); }
   function summaries() { return records.map(record => summary(record.id)); }
-  function create(name, config = {}, clientId = null) {
+  function findCreation(requestId, name, config = {}) {
     assertReady();
+    const { prior } = creationRequest.lookup(creationRequests, requestId, name, config);
+    if (!prior) return null;
+    if (!simulations.has(prior.battleId) || records.find(record => record.id === prior.battleId)?.placeholder) throw creationRequest.fail('BATTLE_CREATION_RETIRED');
+    return snapshot(prior.battleId);
+  }
+  function create(name, config = {}, clientId = null, requestId = null) {
+    assertReady();
+    const prior = findCreation(requestId, name, config);
+    if (prior) return prior;
+    if (typeof (config.initialBalance ?? config.budget) === 'number' && (config.initialBalance ?? config.budget) < 10) throw Object.assign(new Error('INVALID_BATTLE_BUDGET'), { code: 'INVALID_BATTLE_BUDGET', statusCode: 400 });
     if (typeof name !== 'string' || !name.trim() || name.trim().length > 40) throw Object.assign(new Error('Name must contain 1–40 characters'), { statusCode: 400 });
     const record = { id: crypto.randomUUID(), name: name.trim(), createdAt: now(), config: normalizeBattleConfig(config, policies), ownerClientId: clientId || null };
+    if (record.config.initialBalance < 10) throw Object.assign(new Error('INVALID_BATTLE_BUDGET'), { code: 'INVALID_BATTLE_BUDGET', statusCode: 400 });
     const sim = makeSimulation(record);
     sim.setEnabled(true);
     const next = [...records, record];
+    const nextRequests = requestId ? { ...creationRequests, [requestId]: { battleId: record.id, signature: creationRequest.signature(requestId, name, config) } } : creationRequests;
     if (registryFile) {
-      fs.mkdirSync(path.dirname(registryFile), { recursive: true });
-      fs.writeFileSync(`${registryFile}.tmp`, JSON.stringify({ version: 1, battles: next }), { mode: 0o600 });
-      fs.renameSync(`${registryFile}.tmp`, registryFile);
+      atomicWriteJson(registryFile, { version: 1, battles: next, creationRequests: nextRequests });
     }
     records = next;
+    creationRequests = nextRequests;
     simulations.set(record.id, sim);
+    outage = null; observations.clear();
     return snapshot(record.id);
   }
   function leaderboard(battles = summaries()) {
@@ -200,7 +252,7 @@ function createSimulationBattles({ source, indicatorSource, decisionProvider, fi
     if(records.find(record=>record.id===id)?.placeholder)throw Object.assign(new Error('CREATE_BATTLE_FIRST'),{code:'CREATE_BATTLE_FIRST'});
     get(id).topUp(agentId,amount,requestId);return snapshot(id);
   }
-  function setEnabled(value, id = 'default') { assertReady(); if (value && records.find(r => r.id === id)?.placeholder) throw Object.assign(new Error('CREATE_BATTLE_FIRST'), { statusCode: 409 }); get(id).setEnabled(value); return snapshot(id); }
+  function setEnabled(value, id = 'default') { assertReady(); if (value && records.find(r => r.id === id)?.placeholder) throw Object.assign(new Error('CREATE_BATTLE_FIRST'), { statusCode: 409 }); get(id).setEnabled(value); if (value) { outage = null; observations.clear(); } return snapshot(id); }
   function setEmotion(value, id = 'default') {
     assertReady();
     if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 100) throw Object.assign(new Error('INVALID_BATTLE_EMOTION'), { statusCode: 400, code: 'INVALID_BATTLE_EMOTION' });
@@ -253,7 +305,7 @@ function createSimulationBattles({ source, indicatorSource, decisionProvider, fi
       const fresh = id === 'default' ? makeSimulation(placeholder) : null;
       if (fresh) fresh.setEnabled(false);
       if (registryFile) {
-        fs.writeFileSync(`${registryFile}.tmp`, JSON.stringify({ version: 1, battles: next }), { mode: 0o600 });
+        fs.writeFileSync(`${registryFile}.tmp`, JSON.stringify({ version: 1, battles: next, creationRequests }), { mode: 0o600 });
         fs.renameSync(`${registryFile}.tmp`, registryFile);
       }
       records = next; simulations.delete(id);
@@ -276,7 +328,7 @@ function createSimulationBattles({ source, indicatorSource, decisionProvider, fi
       if (file) {
         archive = path.join(path.dirname(file), 'simulation-archives', crypto.randomUUID());
         fs.mkdirSync(archive, { recursive: true });
-        fs.writeFileSync(path.join(archive, 'simulation-battles.json'), JSON.stringify({ version: 1, battles: records }), { mode: 0o600 });
+        fs.writeFileSync(path.join(archive, 'simulation-battles.json'), JSON.stringify({ version: 1, battles: records, creationRequests }), { mode: 0o600 });
         for (const record of records) {
           const ledger = ledgerFile(record.id);
           if (fs.existsSync(ledger)) fs.copyFileSync(ledger, path.join(archive, path.basename(ledger)));
@@ -287,7 +339,7 @@ function createSimulationBattles({ source, indicatorSource, decisionProvider, fi
       const fresh = makeSimulation(next[0]);
       fresh.setEnabled(false);
       if (registryFile) {
-        fs.writeFileSync(`${registryFile}.tmp`, JSON.stringify({ version: 1, battles: next }), { mode: 0o600 });
+        fs.writeFileSync(`${registryFile}.tmp`, JSON.stringify({ version: 1, battles: next, creationRequests }), { mode: 0o600 });
         fs.renameSync(`${registryFile}.tmp`, registryFile);
       }
       records = next;
@@ -300,7 +352,7 @@ function createSimulationBattles({ source, indicatorSource, decisionProvider, fi
       throw error;
     } finally { resetting = false; }
   }
-  return { snapshot, liveSnapshot, summary, list, summaries, create, leaderboard, getStrategies, setStrategies, touch, topUp, setEnabled, setEmotion, setActionUrge, setRealtimeEntry, end,
+  return { snapshot, liveSnapshot, summary, list, summaries, create, findCreation, leaderboard, getStrategies, setStrategies, touch, topUp, setEnabled, setEmotion, setActionUrge, setRealtimeEntry, end,
     marketFailure(id, code) { assertReady(); get(id).marketFailure(code); },
     retryConnection(id = 'default') { assertReady(); get(id).retryConnection(); return snapshot(id); },
     reset, remove,

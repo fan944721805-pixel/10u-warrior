@@ -47,10 +47,11 @@
     section.append(heading);
     if(!series){section.append(node('p','历史记录不完整，暂不绘制曲线。','equity-chart-note'));return;}
     const stats=node('div',undefined,'equity-chart-stats');
-    for(const [label,value]of [['账面净值',series.current],['已结算盈亏',series.profit]]){
-      const stat=node('div');stat.append(node('small',label),numeric('strong',`${value>0&&label==='已结算盈亏'?'+':''}${number(value)} USDT`));stats.append(stat);
+    for(const [label,value,signed]of [['当前资金',series.current,false],['已结算收益',series.profit,true]]){
+      const stat=node('div');stat.append(node('small',label),numeric('strong',`${value>0&&signed?'+':''}${number(value)} USDT`));stats.append(stat);
     }
     section.append(stats);
+    if(!series.hasChanges){section.append(node('p','还没有结算，资金暂未变化。','equity-chart-note'));return;}
     const {points}=series,W=440,H=180,left=50,right=16,top=15,bottom=24;
     let min=points.reduce((v,p)=>Math.min(v,p.value),Infinity),max=points.reduce((v,p)=>Math.max(v,p.value),-Infinity);
     const pad=Math.max((max-min)*.15,Math.abs(max)*.02,.01);min-=pad;max+=pad;
@@ -87,14 +88,13 @@
     const pick=event=>{const box=svg.getBoundingClientRect(),target=(event.clientX-box.left)/box.width*W;let closest=0;points.forEach((p,i)=>{if(Math.abs(x(p,i)-target)<Math.abs(x(points[closest],closest)-target))closest=i;});select(closest);};
     svg.onpointerdown=event=>{svg.setPointerCapture(event.pointerId);pick(event);};svg.onpointermove=event=>{if(event.buttons)pick(event);};
     select(selected===null?points.length-1:selected);
-    if(!series.hasChanges)section.append(node('p','尚无结算记录，资金保持初始值。','equity-chart-note'));
-    section.append(node('p','按结算与补资记录绘制；未结算本金计入资金，补资不计入盈亏。','equity-chart-note'));
+    section.append(node('p','资金包含待结算的下注；追加资金不算收益。','equity-chart-note'));
     if(series.deposits){const legend=node('p',undefined,'equity-chart-note equity-chart-legend');legend.append(node('i'),node('span','补资'),numeric('span',`+${number(series.deposits)} USDT`));section.append(legend);}
   }
   const signature=(simulation,agent)=>JSON.stringify([simulation.endedAt,simulation.config.initialBalance,agent.equity,agent.cash,agent.reserved,agent.addedCapital,agent.topUps,agent.orders.map(o=>[o.id,o.status,o.amount,o.payout,o.settledAt,o.end,o.quote?.odds])]);
-  root.WarriorEquity={buildSeries,mount(simulation,agent){
+  root.WarriorEquity={buildSeries,mount(simulation,agent,{watch=true}={}){
     const section=node('section',undefined,'agent-equity-chart');section.dataset.agentId=agent.id;
-    active={section,battleId:simulation.id,agentId:agent.id,signature:signature(simulation,agent)};render(section,simulation,agent);return section;
+    active=watch?{section,battleId:simulation.id,agentId:agent.id,signature:signature(simulation,agent)}:null;render(section,simulation,agent);return section;
   }};
   function refresh(preserve=false){
     if(!active?.section.isConnected||!doc.querySelector('#detail-dialog')?.open)return;

@@ -4,16 +4,33 @@
 .ai-settings-tabs button:focus-visible { outline:3px solid #8753b6; outline-offset:2px; }
 #api-dialog [role="tabpanel"][hidden] { display:none !important; }
 #api-dialog .agent-editor { margin:0; }
-.ai-strategy-toolbar { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:10px; align-items:center; }
-.ai-strategy-toolbar label { color:#614374; font-size:13px; font-weight:750; }
-.ai-strategy-toolbar select { min-width:0; width:100%; min-height:48px; padding:10px; border:1px solid #c8b2d8; border-radius:12px; background:#fff; color:#493052; font:inherit; }
-.ai-strategy-toolbar button { min-height:48px; padding:10px 14px; border-radius:12px; background:#eee4f6; color:#614374; }
 .ai-settings-note { color:#8c789b; font-size:12px; line-height:1.6; }
 .ai-routing { margin-top:24px; padding-top:16px; border-top:1px solid #dfd2e6; }
 .ai-routing h3 { color:#493052; margin:20px 0 12px; font-size:16px; }
-.ai-routing-grid,.ai-usage-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
-.ai-usage-card { min-width:0; padding:14px; background:#f3ecf8; border:1px solid #dfd2e6; border-radius:16px; }
-.ai-usage-card h4 { margin:0; overflow-wrap:anywhere; color:#493052; }
+.ai-routing-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.ai-usage-heading { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:6px 16px; margin:4px 0 14px; }
+.ai-usage-heading h3 { margin:0; font-size:15px; }
+.ai-usage-heading > span { font-size:11px; color:#94809f; }
+.ai-usage-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr)); gap:12px; align-items:start; }
+.ai-usage-card { min-width:0; padding:16px 16px 0; background:linear-gradient(135deg,#fff,#faf6fd); border:1px solid #e4d8ed; border-radius:16px; }
+.ai-usage-identity { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+.ai-usage-provider { padding:4px 8px; border-radius:7px; background:#eee5f7; color:#79569b; font-size:11px; font-weight:700; }
+.ai-usage-card h4 { margin:0; overflow-wrap:anywhere; color:#745d83; font-size:12px; font-weight:500; }
+.ai-usage-stats { display:grid; grid-template-columns:minmax(0,1.5fr) minmax(0,1fr); gap:12px; margin:18px 0 16px; }
+.ai-usage-stats span { display:block; color:#8c789b; font-size:11px; margin-bottom:5px; }
+.ai-usage-stats strong { display:block; font-size:26px; line-height:1.25; letter-spacing:-.6px; color:#674288; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.ai-usage-stats > div + div { border-left:1px solid #ede5f3; padding-left:16px; }
+.ai-usage-stats > div + div strong { color:#79658a; }
+.ai-usage-card .ai-usage-missing { display:flex; gap:8px; margin:0 0 12px; color:#9c7746; font-size:11px; }
+.ai-usage-details { border-top:1px solid #eee6f4; }
+.ai-usage-details > summary { display:flex; align-items:center; justify-content:space-between; min-height:48px; cursor:pointer; list-style:none; color:#86699c; font-size:12px; }
+.ai-usage-details > summary::-webkit-details-marker { display:none; }
+.ai-usage-details > summary::after { content:'+'; font-size:18px; }
+.ai-usage-details[open] > summary::after { content:'−'; }
+.ai-usage-details > summary:focus-visible { outline:3px solid #b6a0df; outline-offset:2px; border-radius:6px; }
+.ai-usage-breakdown { padding-bottom:12px; }
+.ai-usage-breakdown .ai-settings-note { margin:12px 0 0; font-size:11px; }
+.ai-usage-empty { margin:0; padding:20px; text-align:center; color:#94809f; background:#f8f3fb; border-radius:12px; font-size:12px; }
 .ai-usage-line { display:flex; flex-wrap:wrap; justify-content:space-between; gap:8px; margin:8px 0; font-size:12px; color:#614374; }
 .ai-usage-line strong { overflow-wrap:anywhere; }
 .ai-call-error { font-size:12px; color:#9b3450; overflow-wrap:anywhere; }
@@ -40,8 +57,6 @@
 #api-dialog #close-agent-editor, #api-dialog .agent-editor-actions button, #api-dialog .agent-option-grid button, #api-dialog .agent-indicator-grid label, #api-dialog #copy-agent-prompt { min-height:48px; }
 #api-dialog #close-agent-editor { min-width:48px; }
 @media(max-width:480px) {
-  .ai-strategy-toolbar { grid-template-columns:minmax(0,1fr) auto; }
-  .ai-strategy-toolbar label { grid-column:1/-1; }
   .ai-settings-tabs button { padding:8px 5px; font-size:12px; overflow-wrap:anywhere; }
 }
 

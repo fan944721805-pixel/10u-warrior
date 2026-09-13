@@ -37,12 +37,15 @@ body #create-dialog .ai-config-list {
   grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: minmax(134px, max-content); gap: 12px;
   max-height: none; overflow: visible;
   align-content: start; padding: 4px; scroll-padding: 4px;
-  scrollbar-width: thin; scrollbar-color: #bda4d2 #f2eaf8;
 }
 body #create-dialog .add-strategy-button { display:grid; place-items:center; align-self:stretch; width:100%; height:auto; min-height:74px; margin:0; border:2px dashed #b99bce; border-radius:16px; background:#f3ecf9; color:#79528f; font-size:40px; font-weight:400; box-shadow:none; }
 body #create-dialog .add-strategy-button:hover { background:#eaf5b9; border-color:#a2b363; color:#53662d; }
 body #create-dialog .add-strategy-button:focus-visible { outline:3px solid #9875b4; outline-offset:2px; }
 body #create-dialog .ai-config.strategy-folded { display:none !important; }
+/* Keep configuration below the fold control while the expanded roster scrolls. */
+body #create-dialog .ai-config-list:has(+ .strategy-list-toggle[aria-expanded=true]) {
+  max-height:min(360px, 40dvh); overflow-y:auto; overscroll-behavior-y:contain;
+}
 body #create-dialog .strategy-list-toggle[hidden] { display:none !important; }
 body #create-dialog .strategy-list-toggle:not([hidden]) {
   display:flex; align-items:center; justify-content:center; gap:8px;

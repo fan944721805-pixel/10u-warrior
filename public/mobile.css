@@ -5,29 +5,60 @@ body .performance .battle-controls {
 .battle-settings-trigger { display:grid; place-items:center; flex:0 0 48px; width:48px; height:48px; padding:0; border:1px solid #e1d4ed; border-radius:13px; background:#faf6ff; color:#79569b; box-shadow:0 2px 0 #e8ddf0; }
 .battle-settings-trigger:hover { background:#eee4f9; border-color:#b69dcc; }
 .battle-settings-trigger svg { width:22px; height:22px; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
-#battle-settings-dialog { box-sizing:border-box; width:min(440px,calc(100vw - 28px)); max-height:calc(100dvh - 32px); overflow:auto; padding:20px; border:1px solid #dfd1ea; border-radius:20px; background:#fffbff; box-shadow:0 5px 0 #44285518; }
-.battle-settings-header { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:14px; }
+body .performance .battle-quick-controls { flex-wrap:nowrap; flex-shrink:0; }
+.battle-quick-controls .battle-action-label { display:none; }
+#battle-settings-dialog { box-sizing:border-box; width:min(440px,calc(100vw - 28px)); max-height:calc(100dvh - 32px); overflow:auto; padding:24px; border:1px solid #ede6f2; border-radius:24px; background:#fff; box-shadow:0 24px 80px #30203e26; color:#3a2850; }
+#battle-settings-dialog::backdrop { background:#261c3c66; backdrop-filter:blur(4px); }
+.battle-settings-header { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:20px; }
 .battle-settings-header h2 { margin:0; font-size:20px; }
-.battle-settings-header button { width:48px; height:48px; padding:0; border:0; border-radius:12px; background:transparent; color:#927ca2; }
+.battle-settings-header button { flex:0 0 48px; width:48px; height:48px; padding:0; border:0; border-radius:50%; background:#f6f3f9; color:#786787; font-size:24px; }
+#battle-settings-dialog .realtime-entry-control { margin:0 0 24px; padding:0 0 20px; border:0; border-bottom:1px solid #eee8f3; border-radius:0; background:none; }
+#battle-settings-dialog .realtime-entry-label strong { font-size:14px; }
+#battle-settings-dialog .realtime-entry-hint { margin:4px 0 0; color:#83758f; font-size:12px; }
+#battle-settings-dialog .realtime-entry-label input { appearance:none; position:relative; width:44px; height:26px; margin:0; border:0; border-radius:20px; background:#ddd5e6; cursor:pointer; }
+#battle-settings-dialog .realtime-entry-label input::before { content:""; position:absolute; top:3px; left:3px; width:20px; height:20px; border-radius:50%; background:#fff; box-shadow:0 1px 3px #30203e26; transition:transform .15s; }
+#battle-settings-dialog .realtime-entry-label input:checked { background:#8055bd; }
+#battle-settings-dialog .realtime-entry-label input:checked::before { transform:translateX(18px); }
+#battle-settings-dialog .realtime-entry-label input:disabled { cursor:not-allowed; }
+#battle-settings-dialog :is(button,input):focus-visible { outline:3px solid #b6a0df; outline-offset:3px; }
 #battle-settings-dialog .battle-emotion-control { margin:0; padding:0; border:0; border-radius:0; background:none; box-shadow:none; }
-#battle-settings-dialog .battle-emotion-control + .battle-emotion-control { margin-top:16px; padding-top:16px; border-top:1px solid #eee5f4; }
-#battle-settings-dialog .battle-emotion-head output { min-width:42px; padding:6px 8px; font-size:16px; border:0; border-radius:8px; background:#f0e8f8; }
-#battle-settings-dialog .battle-emotion-scale small { font-size:11px; font-weight:400; color:#9785a2; }
+#battle-settings-dialog .battle-emotion-control + .battle-emotion-control { margin-top:24px; padding-top:24px; border-top:1px solid #eee8f3; }
+#battle-settings-dialog .battle-emotion-head output { min-width:44px; padding:7px 10px; font-size:20px; font-variant-numeric:tabular-nums; border:0; border-radius:10px; background:#f4effa; color:#7045aa; }
+#battle-settings-dialog .battle-emotion-scale { margin:0 60px; }
+#battle-settings-dialog .battle-emotion-scale small { font-size:11px; font-weight:400; color:#83758f; }
+#battle-settings-dialog .battle-range-row { display:grid; grid-template-columns:48px minmax(0,1fr) 48px; align-items:center; gap:12px; margin:12px 0 2px; }
+#battle-settings-dialog .battle-range-step { display:grid; place-items:center; width:48px; min-width:48px; height:48px; padding:0; border:1px solid #e9e0f2; border-radius:14px; background:#f8f5fc; color:#7045aa; font-size:24px; font-weight:500; line-height:1; box-shadow:none; touch-action:manipulation; }
+#battle-settings-dialog .battle-range-step:hover:not(:disabled) { background:#ece3f8; border-color:#cbb6e7; }
+#battle-settings-dialog .battle-range-step:active:not(:disabled) { background:#e2d4f3; }
+#battle-settings-dialog .battle-range-step:disabled { opacity:.35; cursor:not-allowed; }
+#battle-settings-dialog .battle-range-row input { appearance:none; min-width:0; width:100%; height:48px; margin:0; background:transparent; }
+#battle-settings-dialog .battle-range-row input::-webkit-slider-runnable-track { height:6px; border-radius:6px; background:linear-gradient(to right,#8961c2 var(--range-progress,0%),#eee7f5 var(--range-progress,0%)); }
+#battle-settings-dialog .battle-range-row input::-webkit-slider-thumb { appearance:none; width:22px; height:22px; margin-top:-8px; border:3px solid #fff; border-radius:50%; background:#8055bd; box-shadow:0 1px 6px #53307a40; }
+#battle-settings-dialog .battle-range-row input::-moz-range-track { height:6px; border-radius:6px; background:#eee7f5; }
+#battle-settings-dialog .battle-range-row input::-moz-range-progress { height:6px; border-radius:6px; background:#8961c2; }
+#battle-settings-dialog .battle-range-row input::-moz-range-thumb { width:16px; height:16px; border:3px solid #fff; border-radius:50%; background:#8055bd; box-shadow:0 1px 6px #53307a40; }
 #battle-settings-dialog #battle-emotion-warning,
-#battle-settings-dialog #battle-action-urge-warning { margin:12px 0 0; padding:0; background:none; color:#9785a2; font-size:11px; font-weight:400; }
+#battle-settings-dialog #battle-action-urge-warning { margin:12px 0 0; padding:0; background:none; color:#83758f; font-size:12px; line-height:1.65; font-weight:400; }
 #battle-settings-dialog .battle-emotion-head label { flex-direction:column; gap:4px; }
 #battle-settings-dialog .battle-emotion-head b { font-size:14px; }
 #battle-settings-dialog .battle-emotion-head small { font-size:11px; font-weight:400; }
-#battle-settings-dialog .battle-controls { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; width:auto; margin:16px 0 0; padding:16px 0 0; border:0; border-top:1px solid #eee5f4; background:none; box-shadow:none; }
+#battle-settings-dialog .battle-controls { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; width:auto; margin:24px 0 0; padding:20px 0 0; border:0; border-top:1px solid #eee8f3; background:none; box-shadow:none; }
 body[data-rule-ai=true] #battle-settings-dialog .battle-icon { display:flex; flex-direction:row; align-items:center; justify-content:center; gap:6px; width:100%; min-width:0; min-height:48px; height:48px; padding:0 6px; border:1px solid #e2d6ec; border-radius:10px; color:#76568d; background:#fff; box-shadow:none; font-size:12px; }
 #battle-settings-dialog .battle-icon svg { width:17px; height:17px; flex-shrink:0; }
-#battle-settings-dialog #pause { color:#fff; background:#765398; border-color:#765398; }
+#battle-settings-dialog .delete-battle-button { width:100%; min-width:0; min-height:48px; margin:0; padding:6px; border:1px solid #eed7df; border-radius:10px; color:#ad5772; background:#fff7f9; font-size:12px; line-height:1.4; white-space:normal; overflow-wrap:anywhere; }
 #battle-settings-dialog #sim-reset { color:#ad5772; background:#fff7f9; border-color:#eed7df; }
 #battle-settings-dialog .battle-icon:hover { filter:brightness(.97); }
 #battle-settings-dialog .battle-icon:disabled { opacity:.4; cursor:not-allowed; }
 .battle-settings-feedback { margin:12px 0 0; color:#ad5772; font-size:12px; }
+.battle-settings-feedback[data-status=saved] { color:#786787; }
+.battle-settings-feedback[data-status=saved] { color:#765398; }
 .battle-settings-feedback:empty { display:none; }
 @media(max-width:480px) { #battle-settings-dialog { padding:18px; border-radius:20px; } }
+@media(max-width:380px) {
+  #battle-settings-dialog .battle-emotion-scale { margin:4px 0 0; align-items:flex-start; }
+  #battle-settings-dialog .battle-emotion-scale small { max-width:48%; }
+  #battle-settings-dialog .battle-emotion-scale small:last-child { text-align:right; }
+}
 body .performance .battle-controls .battle-icon {
   display: inline-flex; align-items: center; justify-content: center;
   width: 48px; min-width: 48px; height: 48px; min-height: 48px;
@@ -321,11 +352,77 @@ body .topbar .brand .warrior-mark { width: 64px; height: 64px; object-fit: conta
 #ai-arena .agent-summary .agent-previous-pending strong { margin-left:auto; color:#695277; font-variant-numeric:tabular-nums; }
 #ai-arena .agent-summary .agent-entry-price strong { margin-left:auto; text-align:right; overflow-wrap:anywhere; }
 #ai-arena .agent-summary .agent-added-capital { margin:0 0 12px; padding-top:8px; border-top:1px dashed #ede4f3; line-height:1.5; }
-#ai-arena .agent-summary .agent-footer { gap:12px; padding-top:8px; font-size:12px; }
-#ai-arena .agent-summary .agent-win { display:grid; grid-template-columns:auto auto; justify-content:start; align-content:center; gap:0 5px; white-space:nowrap; }
+/* Wrap whole footer groups before the statistics can be squeezed by the actions. */
+#ai-arena .agent-summary .agent-footer { display:flex; flex-wrap:wrap; gap:4px 12px; padding-top:8px; font-size:12px; }
+#ai-arena .agent-summary .agent-win { display:grid; flex:0 0 auto; grid-template-columns:max-content max-content; justify-content:start; align-content:center; gap:0 5px; white-space:nowrap; font-variant-numeric:tabular-nums; }
 #ai-arena .agent-summary .agent-win small { grid-column:2; line-height:16px; }
-#ai-arena .agent-summary .agent-card-actions { margin:0; gap:6px; }
+#ai-arena .agent-summary .agent-card-actions { flex:0 0 auto; margin:0 0 0 auto; gap:6px; }
 #ai-arena .agent-summary .agent-card-actions .agent-detail-link { min-width:64px; padding:0 4px; }
 @media (min-width:761px) {
   #ai-arena .agent-summary .model-top { min-height:52px; }
+}
+
+/* Phone readability: retain the full summary and give each group breathing room. */
+@media (max-width:760px) {
+  body header.topbar { padding:6px 14px; gap:6px; }
+  body .topbar .brand .warrior-mark { width:40px; height:40px; }
+  body main { padding-top:12px; }
+  body .simulation-commandbar .paper-panel { padding-top:4px; padding-bottom:4px; gap:4px 10px; }
+  body .performance { padding:16px 12px 0; }
+  body .performance .balance-row { margin:16px 0 20px; }
+  body .balance-row .label, body .gain, body .round-info > .muted { font-size:12px; line-height:1.6; }
+  body #ai-arena .arena-toolbar { padding-top:14px; margin-bottom:12px; }
+  body #ai-arena .arena-heading > strong { font-size:15px; }
+  body #ai-arena .arena-toolbar > span { font-size:12px; }
+  body #ai-arena .models-section > .section-heading { margin-bottom:0; }
+  body[data-rule-ai=true] #ai-arena .model-grid { gap:28px 18px; padding:18px 0 10px; }
+  body[data-rule-ai=true] #ai-arena .model-card.agent-summary { padding:18px; }
+  #ai-arena .agent-summary .model-top { min-height:48px; gap:12px; }
+  #ai-arena .agent-summary .model-top strong { font-size:16px; line-height:1.5; }
+  #ai-arena .agent-equity-head { min-height:0; gap:14px; margin:18px 0 16px; }
+  #ai-arena .agent-summary .agent-balance > span,
+  #ai-arena .agent-summary .agent-floating > span { font-size:12px; line-height:20px; margin-bottom:6px; color:#816d90; }
+  #ai-arena .agent-summary .agent-balance strong { font-size:28px; line-height:1.35; }
+  #ai-arena .agent-summary .agent-floating > b { font-size:25px; line-height:1.35; }
+  #ai-arena .agent-summary .agent-floating > small { font-size:12px; line-height:20px; color:#816d90; margin-top:4px; }
+  #ai-arena .agent-summary .agent-stats { gap:8px; padding:12px 10px; margin-bottom:18px; }
+  #ai-arena .agent-summary .agent-stats span { font-size:12px; line-height:20px; color:#816d90; }
+  #ai-arena .agent-summary .agent-stats strong,
+  #ai-arena .agent-summary .agent-stats b { font-size:13px; line-height:20px; }
+  #ai-arena .agent-summary .agent-stats .valuation-book,
+  #ai-arena .agent-summary .agent-funds > div { gap:5px; }
+  #ai-arena .agent-summary .agent-round { padding:0 0 18px; }
+  #ai-arena .agent-summary .agent-round-top { font-size:12px; line-height:20px; color:#816d90; }
+  #ai-arena .agent-summary .agent-state { padding:4px 9px; line-height:20px; }
+  #ai-arena .agent-summary .agent-bet { margin-top:12px; min-height:32px; line-height:1.65; }
+  #ai-arena .agent-summary .agent-waiting { font-size:14px; color:#816d90; }
+  #ai-arena .agent-summary .agent-footer { padding-top:12px; gap:10px 12px; font-size:12px; }
+  #ai-arena .agent-summary .agent-win { gap:3px 6px; color:#816d90; }
+  #ai-arena .agent-summary .agent-win small { font-size:12px; line-height:20px; color:#816d90; }
+  #ai-arena .agent-summary .agent-detail-link { font-size:13px; }
+  #ai-arena .agent-summary .agent-entry-price,
+  #ai-arena .agent-summary .agent-previous-pending { font-size:12px; line-height:1.65; gap:6px 10px; }
+
+  /* Give the switcher a full row instead of sharing space with playback controls. */
+  body .performance .section-top:has(#battle-switcher:not([hidden])) { row-gap:12px; column-gap:10px; }
+  body #battle-switcher:not([hidden]) {
+    grid-column:1 / -1; grid-row:1; width:100%; margin:0; gap:8px; padding:2px 0 4px;
+    scroll-snap-type:x proximity; overscroll-behavior-x:contain; scrollbar-width:none;
+  }
+  body #battle-switcher::-webkit-scrollbar { display:none; }
+  body #battle-switcher .battle-switch {
+    display:grid; grid-template-columns:6px minmax(0,1fr); gap:4px 8px;
+    flex:0 0 calc((100% - 8px) / 2); min-width:0; min-height:68px;
+    padding:10px 12px; border:1px solid #e7ddec; border-radius:14px;
+    background:#faf7fd; color:#877196; scroll-snap-align:start;
+  }
+  body #battle-switcher:has(.battle-switch:nth-child(3)) .battle-switch { flex-basis:44%; min-width:128px; }
+  body #battle-switcher .battle-switch::before { grid-column:1; grid-row:1; }
+  body #battle-switcher .battle-switch strong { grid-column:2; grid-row:1; font-size:14px; line-height:1.5; white-space:normal; overflow-wrap:anywhere; }
+  body #battle-switcher .battle-switch small { grid-column:2; grid-row:2; font-size:12px; line-height:1.5; white-space:normal; overflow-wrap:anywhere; }
+  body #battle-switcher .battle-switch[aria-pressed=true] { background:#eee3f8; border-color:#b497d0; color:#513368; box-shadow:inset 0 0 0 1px #b497d026; }
+  body #battle-switcher .battle-switch[aria-pressed=true]::after { display:none; }
+  body #battle-switcher .battle-switch:active { background:#e6d8f2; }
+  body #battle-switcher:not([hidden]) + .experiment-title { display:grid; grid-column:1; grid-row:2; }
+  body .performance .section-top:has(#battle-switcher:not([hidden])) .battle-quick-controls { grid-column:2; grid-row:2; justify-self:end; }
 }

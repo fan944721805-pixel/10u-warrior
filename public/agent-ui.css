@@ -993,6 +993,10 @@
 }
 .agent-risk-summary .agent-stake-ladder{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));flex:1 1 100%;gap:5px;padding:6px;border-radius:14px;background:#f7f1fb}.agent-stake-ladder i{display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:0;padding:6px 8px;border-radius:10px;background:#fff;font-style:normal}.agent-stake-ladder small{overflow:hidden;text-overflow:ellipsis;color:#897394;font-size:10px;white-space:nowrap}.agent-stake-ladder strong{color:#523566;font-size:12px;font-variant-numeric:tabular-nums}
 
+.agent-risk-summary .agent-stake-binary{grid-template-columns:repeat(2,minmax(0,1fr))}
+.agent-stake-binary i{min-height:48px;flex-wrap:wrap}
+.agent-stake-binary small{white-space:normal;overflow:visible;text-overflow:clip}
+
 .agent-range-setting > label,
 .agent-range-setting > div {
   display: flex;

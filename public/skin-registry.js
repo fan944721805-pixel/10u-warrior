@@ -21,6 +21,7 @@
     ['rider-avatar', 'delivery-rider-avatar.png'],
     ...['super-ai','miser','buffett','trend-chaser','bottom-top-hunter','candlestick-bro','rocket-bro','whale-detective','steady-dog','six-vote-warrior','feng-shui-master','diviner'].map(id => [id, `strategy-icons/${id}.png`]),
     ['cz-brother','strategy-icons/cz-brother-v2.png'],['contrarian','strategy-icons/contrarian.png'],['showoff','strategy-icons/showoff.png'],['first-lady','strategy-icons/first-lady.png'],
+    ['liang-xi','strategy-icons/liang-xi.png'],
   ];
   bundledImages.forEach(([id, imageUrl], index) => {
     const skinId = `generated-bundled-${id}`;
@@ -118,6 +119,7 @@
   }
 
   const strategySkins = {
+    liangXi:'liang-xi',
     aggressive:'rider', smart:'super-ai', conservative:'miser', trendFollowing:'trend-chaser',
     meanReversion:'bottom-top-hunter', priceAction:'candlestick-bro', breakout:'rocket-bro', orderFlow:'whale-detective',
     volatilityGuard:'steady-dog', consensus:'six-vote-warrior',

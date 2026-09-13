@@ -35,6 +35,7 @@ function createExecutionBridge({ file, now = Date.now, getIntent, requestQuote, 
     const { battle, agent, intent } = getIntent(battleId, intentId);
     if (!battle.enabled || battle.status !== 'running') throw fail('BATTLE_NOT_RUNNING');
     if (!intent || intent.mode !== 'paper' || intent.side !== 'BUY' || intent.orderType !== 'MARKET') throw fail('INTENT_NOT_ELIGIBLE');
+    if (intent.simulationOnly) throw fail('INTENT_NOT_ELIGIBLE');
     if (intent.marketSource && intent.marketSource !== 'binance-prediction') throw fail('PRACTICE_INTENT_NOT_EXECUTABLE');
     if (intent.id !== intentId || intent.agentId !== agent.id || battle.id !== battleId || !intent.tokenId || !intent.marketTopicId) throw fail('INTENT_IDENTITY_MISMATCH');
     if (!Number.isFinite(intent.expiresAt) || now() >= intent.expiresAt) throw fail('INTENT_EXPIRED');

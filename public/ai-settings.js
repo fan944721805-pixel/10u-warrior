@@ -2,7 +2,7 @@
   const dialog = document.querySelector('#api-dialog');
   const editor = document.querySelector('#agent-editor');
   if (!dialog || !editor) return;
-  let returnToCreate = false, openingEditor = false, addingAgent = false;
+  let returnToCreate = false, openingEditor = false;
   const make = (tag, text = '', className = '') => {
     const element = document.createElement(tag);
     element.textContent = text; element.className = className;
@@ -14,14 +14,8 @@
   connections.append(...dialog.querySelectorAll('.api-workspace, .api-saved-section, .api-security-note'));
   const strategies = make('section');
   strategies.id = 'ai-strategies-panel';
-  const toolbar = make('div', '', 'ai-strategy-toolbar');
-  const label = make('label', '选择策略');
-  label.htmlFor = 'ai-strategy-agent';
-  const picker = make('select'); picker.id = 'ai-strategy-agent';
-  const add = make('button', '＋ 添加 Agent'); add.type = 'button'; add.id = 'api-add-agent';
-  toolbar.append(label, picker, add);
   const note = make('p', '策略调整仅用于新战局，已创建的战局保持原配置。', 'ai-settings-note');
-  strategies.append(toolbar, note, editor);
+  strategies.append(note, editor);
 
   function tabs(id, items, onSelect = () => {}) {
     const bar = make('div', '', 'ai-settings-tabs');
@@ -67,6 +61,7 @@
     return [key, title, panel];
   });
   const editorTabs = tabs('ai-editor', parts);
+  parts.find(([key])=>key==='policy')[2].append(make('p','资金规则：剩余不超过投入本金的 20% 后，持续全押直到回本；模拟全押可低于 5U。守财奴、稳如老狗在资金达到本金 1.5 倍／2 倍时，下注比例降低 20%／30%。','ai-settings-note'));
   editor.querySelector('.agent-editor-head').after(editorTabs.bar, ...parts.map(item => item[2]));
   const mainTabs = tabs('ai-settings', [['connections', 'API 连接', connections], ['strategy', 'AI 策略', strategies]], key => {
     dialog.dataset.settingsSection = key;
@@ -83,34 +78,11 @@
   document.querySelector('#api-connect').setAttribute('aria-label', '打开 AI 设置');
   dialog.querySelector('.api-dialog-close').setAttribute('aria-label', '关闭 AI 设置');
   const create = document.querySelector('#create-dialog');
-  function refreshPicker(id = picker.value) {
-    picker.replaceChildren();
-    const placeholder = make('option', '选择策略'); placeholder.value = ''; placeholder.disabled = true;
-    picker.append(placeholder);
-    const agents = window.agentSetup.getAgents();
-    const modelNames = { claude: 'Claude', gpt: 'GPT', deepseek: 'DeepSeek' };
-    const counts = new Map();
-    agents.forEach(agent => counts.set(agent.provider, (counts.get(agent.provider) || 0) + 1));
-    agents.forEach(agent => {
-      const model = modelNames[agent.provider] || agent.provider;
-      const duplicates = agents.filter(item => item.provider === agent.provider && item.strategy === agent.strategy);
-      const suffix = duplicates.length > 1 ? ` · ${duplicates.findIndex(item => item.id === agent.id) + 1}` : '';
-      const text = `${window.Warrior.agentLabel(agent)}${suffix}`;
-      const option = make('option', text); option.value = agent.id;
-      // Identity stays on the Agent ID; model labels must not rename saved Agents.
-      option.dataset.provider = agent.provider;
-      picker.append(option);
-    });
-    picker.value = id || '';
-  }
-  picker.onchange = () => addingAgent ? window.agentSetup.setNewModel(picker.value) : window.agentSetup.open(picker.value);
-  add.onclick = () => window.agentSetup.open();
   dialog.addEventListener('close', () => {
     window.agentSetup.close();
     if (returnToCreate) { returnToCreate = false; create.showModal(); }
   });
   window.Warrior.aiSettings = {
-    selectedProvider: () => picker.selectedOptions[0]?.dataset.provider || 'gpt',
     select: mainTabs.select,
     open(section = 'strategy', { fromEditor = false } = {}) {
       openingEditor = fromEditor;
@@ -118,21 +90,17 @@
       window.Warrior.openAiSettings(section);
       openingEditor = false;
     },
-    editing(id, provider) {
-      addingAgent = !id;
-      if (addingAgent) {
-        picker.replaceChildren();
-        Object.entries({claude:'Claude',gpt:'GPT',deepseek:'DeepSeek'}).forEach(([value, name]) => {
-          const option = make('option', name); option.value = value; option.dataset.provider = value;
-          option.dataset.noTranslate = ''; picker.append(option);
-        });
-        picker.value = provider;
-      } else refreshPicker(id);
-      editorTabs.select(id ? 'policy' : 'basic');
+    editing() {
+      const available = new Set(window.agentSetup.getAgents().map(agent => agent.strategy));
+      editor.querySelectorAll('[data-agent-strategy]').forEach(button => { button.disabled = !available.has(button.dataset.agentStrategy); });
+      editorTabs.select('basic');
     },
-    closed() { addingAgent = false; refreshPicker(''); },
+    selectStrategy(strategy) {
+      const agent = window.agentSetup.getAgents().find(item => item.strategy === strategy);
+      if (agent) window.agentSetup.open(agent.id);
+    },
     saved(id) { window.agentSetup.open(id); },
     invalid() { editorTabs.select('inputs'); },
   };
-  refreshPicker();
+
 })();

@@ -99,15 +99,51 @@ test('expired orders settle once before resumed betting; manually paused battles
   }
 });
 
-test('unresolved platform results exhaust the budget without inventing a payout; manual retry can finish an ended battle', async () => {
+test('pending settlement keeps polling beyond fault retry limits and automatically finishes an ended battle', async () => {
   const f = fixture(); await enter(f); f.setTime(f.sim.snapshot().agents[0].latest.end + 20000);
   await f.sim.tick(); assert.equal(f.sim.snapshot().recovery.kind, 'settlement');
-  f.sim.end('MANUAL'); await exhaust(f);
+  assert.equal(f.sim.snapshot().status, 'awaiting-settlement');
+  f.sim.end('MANUAL');
+  for (let n = 0; n < 12; n++) {
+    const pending = f.sim.snapshot().recovery;
+    assert.equal(pending.attempts, 0); assert.equal(pending.maxAttempts, null);
+    assert.equal(pending.nextRetryAt - f.now(), 30000);
+    f.setTime(pending.nextRetryAt - 1); const calls = f.calls.length; await f.sim.tick(); assert.equal(f.calls.length, calls);
+    f.setTime(pending.nextRetryAt); await f.sim.tick();
+  }
   assert.ok(f.sim.snapshot().agents.every(a => a.cash === 95 && a.latest.status === 'OPEN'));
-  const count = f.calls.length; f.setTime(f.now() + 3600000); await f.sim.tick(); assert.equal(f.calls.length, count);
-  f.resolve(); f.sim.retryConnection(); await f.sim.tick();
+  f.resolve(); f.setTime(f.sim.snapshot().recovery.nextRetryAt); await f.sim.tick();
   assert.equal(f.sim.snapshot().status, 'ended'); assert.equal(f.sim.snapshot().recovery, null);
   assert.ok(f.sim.snapshot().agents.every(a => a.orders.length === 1));
+  assert.equal(f.sim.snapshot().auditTrail.filter(e => e.type === 'SETTLEMENT').length, 3);
+  await f.sim.tick(); assert.equal(f.sim.snapshot().auditTrail.filter(e => e.type === 'SETTLEMENT').length, 3);
+});
+
+test('a genuine network fault during settlement has a bounded retry batch, while pending results do not', async () => {
+  const f = fixture(); await enter(f); f.setTime(f.sim.snapshot().agents[0].latest.end + 20000); await f.sim.tick();
+  f.break(); f.setTime(f.sim.snapshot().recovery.nextRetryAt); await f.sim.tick();
+  assert.equal(f.sim.snapshot().recovery.kind, 'network'); assert.equal(f.sim.snapshot().recovery.attempts, 0);
+  await exhaust(f); assert.equal(f.sim.snapshot().recovery.status, 'exhausted');
+  f.break(false); f.sim.retryConnection(); await f.sim.tick();
+  assert.equal(f.sim.snapshot().recovery.kind, 'settlement'); assert.equal(f.sim.snapshot().recovery.attempts, 0);
+  f.sim.setEnabled(false); f.resolve(); f.setTime(f.sim.snapshot().recovery.nextRetryAt); await f.sim.tick();
+  assert.equal(f.sim.snapshot().status, 'paused'); assert.equal(f.sim.snapshot().recovery, null);
+});
+
+test('restart retains settlement polling and migrates exhausted old settlement waits without re-enabling bets', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'warrior-settlement-'));
+  t.after(() => { assert.equal(path.dirname(dir), os.tmpdir()); fs.rmSync(dir, { recursive: true, force: true }); });
+  const file = path.join(dir, 'ledger.json'), f = fixture(file);
+  await enter(f); f.sim.end(); f.setTime(f.sim.snapshot().agents[0].latest.end + 20000); await f.sim.tick();
+  const before = f.sim.snapshot().recovery;
+  let restored = createPredictionSimulation({ ...f.options, pauseOnRestore: true });
+  await restored.tick(); assert.deepEqual(restored.snapshot().recovery, before);
+  const old = JSON.parse(fs.readFileSync(file)); old.recovery.status = 'exhausted'; old.recovery.attempts = 5; old.recovery.maxAttempts = 5; old.recovery.nextRetryAt = null;
+  fs.writeFileSync(file, JSON.stringify(old));
+  restored = createPredictionSimulation({ ...f.options, pauseOnRestore: true }); await restored.tick();
+  assert.equal(restored.snapshot().recovery.attempts, 0); assert.equal(restored.snapshot().enabled, false);
+  f.resolve(); f.setTime(restored.snapshot().recovery.nextRetryAt); await restored.tick();
+  assert.equal(restored.snapshot().status, 'ended'); assert.ok(restored.snapshot().agents.every(a => a.reconciliation.matched));
 });
 
 test('login failures use the auth state and starting controls do not reset an exhausted budget', async () => {

@@ -38,4 +38,31 @@
   }
   media.addEventListener('change', apply);
   apply();
+
+  // Only reveal a newly selected tab; background updates must not undo a user's swipe.
+  const switcher = document.querySelector('#battle-switcher');
+  if (!switcher) return;
+  let lastActive = null, revealFrame = 0, forceReveal = false;
+  function scheduleReveal(force = false) {
+    forceReveal ||= force;
+    if (revealFrame) return;
+    revealFrame = requestAnimationFrame(() => {
+      revealFrame = 0;
+      const forced = forceReveal; forceReveal = false;
+      if (!media.matches || switcher.hidden) { lastActive = null; return; }
+      const active = switcher.querySelector('[aria-pressed="true"]');
+      if (!active || (!forced && active === lastActive)) return;
+      lastActive = active;
+      const viewport = switcher.getBoundingClientRect(), tab = active.getBoundingClientRect();
+      const delta = tab.left < viewport.left ? tab.left - viewport.left
+        : tab.right > viewport.right ? tab.right - viewport.right : 0;
+      if (delta) switcher.scrollBy({ left:delta, behavior:'auto' });
+    });
+  }
+  new MutationObserver(() => scheduleReveal()).observe(switcher, {
+    subtree:true, childList:true, attributes:true, attributeFilter:['aria-pressed', 'hidden'],
+  });
+  new ResizeObserver(() => scheduleReveal(true)).observe(switcher);
+  media.addEventListener('change', () => scheduleReveal(true));
+  scheduleReveal(true);
 })();

@@ -32,20 +32,18 @@ const { ROUND } = require('../prediction-sim');
     await simulation.tick(); f.setTime(f.slot); await simulation.tick();
     await page.clock.setFixedTime(new Date(f.now()));
     await page.waitForFunction(() => window.Warrior.state.simulation.agents[0]?.orders.length === 1);
-    assert.equal(await page.locator('#simulation-source-notice').getAttribute('data-source'), 'public-spot');
+    assert.equal(await page.evaluate(() => window.Warrior.state.simulation.marketSource), 'public-spot');
     assert.equal(await page.locator('.agent-live-intent').isVisible(), false);
-    await page.locator('#simulation-source-notice summary').click();
-    assert.ok((await page.locator('#simulation-source-notice').innerText()).includes('2 倍'));
+    assert.equal(await page.locator('#simulation-source-notice').count(), 0);
     for (const width of [393, 768, 1440]) {
       await page.setViewportSize({ width, height: 900 });
       for (const locale of ['zh', 'en']) {
         await page.locator('.language-toggle').selectOption(locale);
         await page.waitForFunction(lang => document.documentElement.lang === lang, locale === 'zh' ? 'zh-CN' : 'en');
-        assert.equal(await page.locator('#simulation-source-notice summary').isVisible(), true);
-        const label = await page.locator('#simulation-source-notice').innerText();
+        assert.equal(await page.locator('#simulation-source-notice').count(), 0);
+        const label = await page.locator('#sim-source').textContent();
         assert.ok(label.includes(locale === 'en' ? 'No-wallet practice' : '免连接模拟'), label);
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
-        const rect = await page.locator('#simulation-source-notice summary').boundingBox(); assert.ok(rect.height >= 48);
         await page.screenshot({ path: path.join(output, `practice-${width}-${locale}.png`), fullPage: true });
       }
     }
@@ -56,14 +54,15 @@ const { ROUND } = require('../prediction-sim');
     await page.clock.setFixedTime(new Date(f.now()));
     await page.waitForFunction(() => window.Warrior.state.simulation.agents[0]?.orders.length === 2);
     await page.locator('#round-recap-dialog .primary').click();
-    assert.equal(await page.locator('#simulation-source-notice').getAttribute('data-source'), 'binance-prediction');
+    assert.equal(await page.evaluate(() => window.Warrior.state.simulation.marketSource), 'binance-prediction');
     assert.equal(await page.locator('.agent-live-intent').isVisible(), false);
     for (const width of [393, 768, 1440]) {
       await page.setViewportSize({ width, height: 900 });
       for (const locale of ['zh', 'en']) {
         await page.locator('.language-toggle').selectOption(locale);
         await page.waitForFunction(lang => document.documentElement.lang === lang, locale === 'zh' ? 'zh-CN' : 'en');
-        const label = await page.locator('#simulation-source-notice summary').innerText();
+        assert.equal(await page.locator('#simulation-source-notice').count(), 0);
+        const label = await page.locator('#sim-source').textContent();
         assert.ok(label.includes(locale === 'en' ? 'Live-market paper trading' : '真实市场模拟'), label);
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
         await page.screenshot({ path: path.join(output, `connected-${width}-${locale}.png`), fullPage: true });

@@ -16,6 +16,7 @@ wallet-data/
 coverage/
 test-results/
 playwright-report/
+artifacts/
 .android-sdk/
 android/local.properties
 android/.gradle/

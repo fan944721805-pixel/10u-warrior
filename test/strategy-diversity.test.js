@@ -74,10 +74,10 @@ test('external model decisions are globally limited to four concurrent requests'
   assert.deepEqual(values,[0,1,2,3,4,5,6,7]);assert.equal(peak,MAX_AI_DECISION_CONCURRENCY);assert.equal(limited.describe().maxConcurrentRequests,4);
 });
 
-test('UI exposes the sixteen-Agent roster, eight battle seats, collision meter and responsive grids',()=>{
+test('UI exposes the seventeen-Agent roster, eight battle seats, collision meter and responsive grids',()=>{
   const read=file=>fs.readFileSync(path.join(__dirname,'../public',file),'utf8');
   const setup=read('agent-setup.js'),paper=read('paper.js'),offline=read('offline-simulation.js'),index=read('index.html'),layout=read('ui-v2.css'),arena=read('orb-arena.js');
-  assert.match(setup,/maxCards=16,maxSelected=8/);assert.match(setup,/每局最多选择 8 位 AI/);assert.match(setup,/当前最多添加 16 位 Agent/);
+  assert.match(setup,/maxCards=17,maxSelected=8/);assert.match(setup,/每局最多选择 8 位 AI/);assert.match(setup,/当前最多添加 17 位 Agent/);
   assert.match(paper,/agents\.length > 8/);assert.match(offline,/agents\.length > 8/);assert.match(offline,/raw\.slice\(0, 8\)/);assert.match(index,/每局最多 8 个/);assert.match(index,/id="collision-rate"/);
   assert.match(layout,/grid-template-columns:\s*repeat\(4/);assert.match(layout,/grid-template-columns:\s*repeat\(2/);
   assert.match(arena,/7:\[12,37,62,87,22,50,78\]/);assert.match(arena,/8:\[13,38,63,88,13,38,63,88\]/);

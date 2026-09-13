@@ -41,6 +41,38 @@ function fixture(strategy = 'aggressive') {
   return { now, policy, indicators, input };
 }
 
+test('recovery accepts cent balances without floating point truncation', async () => {
+  for(const balance of [0.01,1.15,2]) {
+    const f=fixture('conservative');
+    Object.assign(f.input.account,{balance,initial_balance:10,capital_recovery:true});
+    const raw=await createMockDecisionProvider().decide(f.input);
+    assert.equal(validateDecision(raw,{...f,now:f.now}).stake,balance);
+  }
+});
+
+test('capital recovery overrides cautious amount caps but keeps direction, freshness and edge checks', async () => {
+  const f=fixture('conservative');
+  Object.assign(f.input.account,{balance:2,initial_balance:10,capital_recovery:true});
+  const provider=createMockDecisionProvider(),raw=await provider.decide(f.input);
+  assert.equal(raw.risk_mode,'ALL_IN');assert.equal(raw.stake_usdt,2);
+  const plan=validateDecision(raw,{...f,now:f.now});
+  assert.equal(plan.stake,2);assert.match(plan.reason,/搏命梭哈/);
+  assert.throws(()=>validateDecision({...raw,stake_usdt:1,stake_pct:50},{...f,now:f.now}),/AI_ALL_IN_REJECTED/);
+  assert.throws(()=>validateDecision({...raw,direction:'DOWN'},{...f,now:f.now}),/AI_STRATEGY_CONDITION_NOT_MET/);
+  assert.throws(()=>validateDecision(raw,{...f,now:f.now+120000}),/STALE|ROUND/);
+  const badOdds=structuredClone(f.input);badOdds.market.up_odds=1.01;
+  assert.throws(()=>validateDecision(raw,{...f,input:badOdds,now:f.now}),/AI_EDGE_NOT_POSITIVE/);
+  const text=decisionPrompt(f.input);assert.match(text,/RECOVERY_ALL_IN is active/);assert.doesNotMatch(text,/ALL_IN is disabled/);
+});
+
+test('profit protection uses the same reduced amount in prompt choices, local model and gate', async () => {
+  const f=fixture('conservative');Object.assign(f.input.account,{balance:200,initial_balance:100});
+  const raw=await createMockDecisionProvider().decide(f.input);
+  const plan=validateDecision(raw,{...f,now:f.now});
+  assert.equal(plan.action,'BET');assert.ok(plan.stake<=14);assert.match(plan.reason,/减少下注/);
+  assert.throws(()=>validateDecision({...raw,stake_usdt:20,stake_pct:10},{...f,now:f.now}),/AI_STAKE_OVER_CAP/);
+});
+
 test('offline model uses strategy, indicators and streaks to produce a bounded paper decision', async () => {
   const f = fixture();
   const provider = createMockDecisionProvider();
@@ -206,7 +238,9 @@ test('replays the three ChatGPT web review responses through the provider parser
     const raw = await provider.decide(f.input);
     if (index === 2) assert.throws(() => validateDecision(raw, { ...f, now: f.now }), { code: 'AI_STAKE_OVER_CAP' });
     else {
-      const plan = validateDecision(raw, { ...f, now: f.now });
+      if(index===1)assert.throws(()=>validateDecision(raw,{...f,now:f.now}),{code:'AI_REASON_CONTRADICTS_INPUT'});
+      // Historical outputs remain readable; current network SKIPs require a reason code.
+      const plan = validateDecision(index===1?responses[index]:raw, { ...f, now: f.now });
       assert.equal(plan.action, index === 0 ? 'BET' : 'SKIP');
       assert.equal(plan.stake, index === 0 ? 20 : 0);
     }

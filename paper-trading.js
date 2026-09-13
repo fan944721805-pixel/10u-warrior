@@ -47,10 +47,10 @@ function createPaperTrading({ file, fetchImpl = fetch, now = Date.now } = {}) {
   function fresh(quote) {
     return quote && now() - quote.tradeTime <= 15000 && quote.tradeTime <= now() + 2000;
   }
-  async function price(symbol) {
+  async function price(symbol, { force = false } = {}) {
     symbolCheck(symbol);
     const cached = cache.get(symbol);
-    if (cached && now() - cached.receivedAt < 2000 && fresh(cached)) return cached;
+    if (!force && cached && now() - cached.receivedAt < 2000 && fresh(cached)) return cached;
     if (inflight.has(symbol)) return inflight.get(symbol);
     const pending = (async () => {
       const rows = await get('aggTrades', { symbol, limit: '1' });

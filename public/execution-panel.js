@@ -1,6 +1,6 @@
 (() => {
   const api = window.Warrior?.simulationApi;
-  if (!api || api.mode === 'offline') return;
+  if (!api || api.mode === 'offline' || api.mode === 'native') return;
   const node = (tag, text, cls = '') => { const el = document.createElement(tag); el.textContent = text; el.className = cls; return el; };
   const dialog = node('dialog', '', 'execution-dialog'); dialog.id = 'execution-dialog';
   const body = node('div', '');

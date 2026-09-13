@@ -3,8 +3,8 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { roundContext } = require('./round-direction');
 const { atomicWriteJson } = require('./atomic-json');
-const { assertDecisionInputs, buildDecisionContext, decisionAudit, entrySignal, normalizePolicy, rejectedDecisionAudit, validateDecision } = require('./ai-decision');
-const { decisionStage, peerSnapshot } = require('./public/strategy-catalog');
+const { assertDecisionInputs, buildDecisionContext, decisionAudit, entrySignal, entryWaitReason, modelReview, normalizePolicy, rejectedDecisionAudit, validateDecision } = require('./ai-decision');
+const { MIN_STAKE, capitalManagement, decisionStage, peerSnapshot } = require('./public/strategy-catalog');
 const PERIODS = Object.freeze({
   '5m': 5 * 60 * 1000,
   '15m': 15 * 60 * 1000,
@@ -17,7 +17,6 @@ const EASTERN_NOON_FORMATTER = new Intl.DateTimeFormat('en-CA', {
   hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
 });
 const STAKE = 5;
-const MIN_STAKE = 1;
 const ENTRY_POLL_MS = 5000;
 const ENTRY_COOLDOWN_MS = 30000;
 const ENTRY_CLOSE_BUFFER_MS = 30000;
@@ -272,7 +271,7 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
   for (const a of state.agents) if (a.lastStatus === 'QUOTING') a.lastStatus = 'SKIPPED';
   let nextSlot = nextRoundSlot(now(), roundMs);
   let prepared = null, busy = false, lastPrepare = 0, lastSettle = 0, failure = null;
-  const { RETRY_DELAYS, recoveryKind } = require('./recovery-policy');
+  const { RETRY_DELAYS, SETTLEMENT_POLL_MS, recoveryKind } = require('./recovery-policy');
   let recoveryProbe = false;
   state.recovery = state.recovery || null;
   function enterRecovery(cause, stage = 'market') {
@@ -281,10 +280,12 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
     const code = cause?.code || cause?.name || 'MARKET_UNAVAILABLE';
     controlVersion++;
     prepared = null;
-    state.entryRound = null;
-    state.recovery = { status: 'retrying', code, kind: recoveryKind(code), stage,
-      attempts: 0, maxAttempts: RETRY_DELAYS.length, since: now(), lastAttemptAt: null,
-      nextRetryAt: now() + RETRY_DELAYS[0] };
+    // Preserve attempts and frozen readings while controlVersion cancels in-flight work.
+    // Recovery revalidates this market before any new decision can use it.
+    const kind = recoveryKind(code);
+    state.recovery = { status: 'retrying', code, kind, stage,
+      attempts: 0, maxAttempts: kind === 'settlement' ? null : RETRY_DELAYS.length, since: now(), lastAttemptAt: null,
+      nextRetryAt: now() + (kind === 'settlement' ? SETTLEMENT_POLL_MS : RETRY_DELAYS[0]) };
     record('RECOVERY_STARTED', { code, stage });
     save('recovery-started');
   }
@@ -299,15 +300,22 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
   }
   async function recover() {
     const recovery = state.recovery;
-    if (!recovery || recovery.status === 'exhausted') return;
-    if (recovery.attempts >= RETRY_DELAYS.length) {
+    if (!recovery) return;
+    const waitingForSettlement = recovery.kind === 'settlement';
+    // Restore old ledgers whose normal settlement wait exhausted a fault budget.
+    if (waitingForSettlement && (recovery.status === 'exhausted' || recovery.maxAttempts !== null)) {
+      recovery.status = 'retrying'; recovery.attempts = 0; recovery.maxAttempts = null;
+      recovery.nextRetryAt = now() + SETTLEMENT_POLL_MS; save('settlement-wait-restored');
+    }
+    if (recovery.status === 'exhausted') return;
+    if (!waitingForSettlement && recovery.attempts >= RETRY_DELAYS.length) {
       recovery.status = 'exhausted'; recovery.nextRetryAt = null; save('recovery-exhausted'); return;
     }
     if (now() < recovery.nextRetryAt) return;
-    recovery.attempts++;
+    if (!waitingForSettlement) recovery.attempts++;
     recovery.lastAttemptAt = now();
     // Consume the attempt before I/O. A restart cannot replenish its budget.
-    recovery.nextRetryAt = now() + RETRY_DELAYS[Math.min(recovery.attempts, RETRY_DELAYS.length - 1)];
+    recovery.nextRetryAt = now() + (waitingForSettlement ? SETTLEMENT_POLL_MS : RETRY_DELAYS[Math.min(recovery.attempts, RETRY_DELAYS.length - 1)]);
     save('recovery-attempt');
     recoveryProbe = true;
     try {
@@ -331,9 +339,25 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
       if (recovery.stage === 'indicators') await indicatorSource.snapshot(normalizedAsset, state.config.period);
       nextSlot = nextRoundSlot(now(), roundMs);
       if (state.lifecycle !== 'settling') {
-        const candidate = await readSource('marketFor', nextSlot, normalizedAsset, roundMs);
-        validateMarket(candidate, nextSlot, normalizedAsset, roundMs);
-        if (state.enabled) prepared = candidate;
+        const currentSlot=nextSlot-roundMs;
+        const canResume=integratedDecisions&&state.enabled&&state.config.realtimeEntry&&now()<nextSlot-ENTRY_CLOSE_BUFFER_MS&&
+          (!state.config.maxRounds||state.rounds.includes(currentSlot)||state.rounds.length<state.config.maxRounds);
+        if(canResume){
+          const old=state.entryRound?.slot===currentSlot?state.entryRound:null;
+          const candidate=await readSource(old?'detail':'marketFor',old?old.market.marketTopicId:currentSlot,normalizedAsset,roundMs);
+          validateMarket(candidate,currentSlot,normalizedAsset,roundMs);
+          if(old&&String(candidate.marketTopicId)!==String(old.market.marketTopicId))throw error('MARKET_MISMATCH');
+          if(candidate.markets[0].tradingStatus!=='OPEN'||['RESOLVED','SETTLED','CLOSED'].includes(candidate.markets[0].status))throw error('QUOTE_WINDOW_MISSED');
+          await indicatorSource.snapshot(normalizedAsset,state.config.period);
+          state.entryRound={slot:currentSlot,market:candidate,oracles:old?.oracles||{},attempts:old?.attempts||{}};
+          if(!state.rounds.includes(currentSlot)){state.rounds.push(currentSlot);record('ROUND_STARTED',{roundId:String(currentSlot),marketTopicId:candidate.marketTopicId,resumed:true});}
+          lastEntryPoll=-Infinity;
+          record('ROUND_RESUMED',{roundId:String(currentSlot)});
+        }else{
+          const candidate = await readSource('marketFor', nextSlot, normalizedAsset, roundMs);
+          validateMarket(candidate, nextSlot, normalizedAsset, roundMs);
+          if (state.enabled) prepared = candidate;
+        }
       }
       state.recovery = null; failure = null; lastSettle = now();
       record('RECOVERY_SUCCEEDED', { attempts: recovery.attempts });
@@ -342,8 +366,16 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
       if (storageFailed) throw cause;
       recovery.code = cause.code || cause.name || 'MARKET_UNAVAILABLE';
       recovery.kind = recoveryKind(recovery.code);
-      recovery.status = recovery.attempts >= RETRY_DELAYS.length ? 'exhausted' : 'retrying';
-      recovery.nextRetryAt = recovery.status === 'exhausted' ? null : now() + RETRY_DELAYS[recovery.attempts];
+      if (recovery.kind === 'settlement') {
+        recovery.attempts = 0; recovery.maxAttempts = null;
+        recovery.status = 'retrying'; recovery.nextRetryAt = now() + SETTLEMENT_POLL_MS;
+      } else {
+        // The first actual fault after a successful pending-result response starts a new bounded batch.
+        if (waitingForSettlement) recovery.attempts = 0;
+        recovery.maxAttempts = RETRY_DELAYS.length;
+        recovery.status = recovery.attempts >= RETRY_DELAYS.length ? 'exhausted' : 'retrying';
+        recovery.nextRetryAt = recovery.status === 'exhausted' ? null : now() + RETRY_DELAYS[recovery.attempts];
+      }
       prepared = null;
       record('RECOVERY_FAILED', { code: recovery.code, attempt: recovery.attempts, exhausted: recovery.status === 'exhausted' });
       save('recovery-failed');
@@ -370,11 +402,18 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
     const length = count === -1 ? settled.length : count;
     return status === 'WON' ? { winStreak: length, lossStreak: 0 } : { winStreak: 0, lossStreak: length };
   }
+  function capitalForAgent(a) {
+    return capitalManagement({strategy:a.policy.strategy,balance:a.cash,initialBalance:state.config.initialBalance+(a.addedCapital||0),openStake:a.orders.filter(o=>o.status==='OPEN').reduce((sum,o)=>sum+o.amount,0),recoveryActive:a.capitalRecovery});
+  }
+  const minimumStake = a => capitalForAgent(a).recoveryActive ? .01 : MIN_STAKE;
   function account(a) {
     const open = a.orders.filter(order => order.status === 'OPEN');
     const wins = a.orders.filter(order => order.status === 'WON').length;
     const losses = a.orders.filter(order => order.status === 'LOST').length;
-    return { balance: a.cash, initialBalance: state.config.initialBalance + (a.addedCapital || 0), wins, losses, openStake: open.reduce((sum, order) => sum + order.amount, 0), ...streaks(a.orders) };
+    const initialBalance=state.config.initialBalance+(a.addedCapital||0),openStake=open.reduce((sum,order)=>sum+order.amount,0);
+    const recovery=capitalForAgent(a).recoveryActive;
+    if(recovery!==Boolean(a.capitalRecovery)){a.capitalRecovery=recovery;save('capital-mode');}
+    return { balance:a.cash,initialBalance,openStake,capitalRecovery:a.capitalRecovery,wins,losses,...streaks(a.orders) };
   }
   function touchState() {
     if (leaseEnabled) state.lastSeenAt = now();
@@ -415,7 +454,7 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
   }
   function buildSnapshot({ compact = false, includeOrders = true } = {}) {
     const active = state.agents.flatMap(a => a.orders).find(o => o.start <= now() && o.end > now());
-    const status = ['ended', 'settling'].includes(state.lifecycle) ? state.lifecycle : state.recovery ? (state.recovery.status === 'exhausted' ? 'retry-paused' : 'reconnecting') : state.enabled ? 'running' : 'paused';
+    const status = ['ended', 'settling'].includes(state.lifecycle) ? state.lifecycle : state.recovery ? (state.recovery.kind === 'settlement' ? 'awaiting-settlement' : state.recovery.status === 'exhausted' ? 'retry-paused' : 'reconnecting') : state.enabled ? 'running' : 'paused';
     const references = compact && includeOrders ? referencePrices : null;
     const marketSource = state.entryRound?.market?.marketSource || prepared?.marketSource || source.describe?.().nextMarketSource || 'binance-prediction';
     const feesIncluded = state.agents.every(a => a.orders.every(o => o.quote?.feesIncluded === true));
@@ -428,7 +467,7 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
       config: { ...state.config, rounds: state.config.maxRounds, agents: state.agents.map(a => policy(a.id)) },
       initialTotal: state.agents.length * Number(state.config.initialBalance || startingBalance),
       addedCapital: state.agents.reduce((sum,a)=>sum+(a.addedCapital||0),0),
-      endedAt: state.endedAt, endReason: state.endReason,
+      endedAt: state.endedAt, endReason: state.endReason, aiConnectionFailure: state.aiConnectionFailure || null,
       error: storageFailed ? 'STORAGE_ERROR' : state.recovery?.code || failure, recovery: state.recovery, storageIssue, ...viewMeta(),
       auditTrail: compact ? [] : state.auditTrail, agents: state.agents.map(a => {
         const open = a.orders.filter(o => o.status === 'OPEN');
@@ -439,7 +478,7 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
         const expectedCash = Math.round((state.config.initialBalance + (a.addedCapital||0) - totalDebits + totalCredits) * 1e8) / 1e8;
         const orders = !includeOrders ? [] : compact ? a.orders.map(order => compactOrder(order, references)) : a.orders;
         const watching = state.enabled && !state.recovery && state.config.realtimeEntry && state.entryRound && now() < state.entryRound.slot + roundMs - ENTRY_CLOSE_BUFFER_MS &&
-          a.cash >= MIN_STAKE && a.lastStatus !== 'QUOTING' && !a.orders.some(order => order.start === state.entryRound.slot);
+          a.cash >= minimumStake(a) && a.lastStatus !== 'QUOTING' && !a.orders.some(order => order.start === state.entryRound.slot);
         return { ...a, lastStatus: watching ? 'WATCHING' : a.lastStatus, policy: policy(a.id), orders, reserved: open.reduce((sum, order) => sum + order.amount, 0),
           reconciliation: { mode: 'paper', initialBalance: state.config.initialBalance, addedCapital:a.addedCapital||0, totalDebits, totalCredits, expectedCash, actualCash: a.cash,
             difference: Math.round((a.cash - expectedCash) * 1e8) / 1e8, matched: Math.abs(a.cash - expectedCash) < 1e-7, feesIncluded: a.orders.every(o => o.quote?.feesIncluded === true) },
@@ -525,32 +564,46 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
       // Independent Agents finish first; CZ opponents follow; crowd-faders last.
       for (const stage of [0,1,2]) {
         if (signalOnly && !validAttempt()) break;
-        const peers = peerSnapshot(state.agents.map(a=>({...a,policy:policy(a.id)})),slot,normalizedAsset,now());
+        const peers = peerSnapshot(state.agents.map(a=>({...a,policy:policy(a.id)})),slot,normalizedAsset,now(),state.config.initialBalance);
         let oracleChanged = false;
-        const decisionJobs = state.agents.filter(a => (signalOnly ? a.cash >= MIN_STAKE && !a.orders.some(o => o.start === slot) : a.lastStatus === 'QUOTING') && decisionStage(policy(a.id).strategy) === stage).flatMap(a => {
+        const decisionJobs = state.agents.filter(a => (signalOnly ? a.cash >= minimumStake(a) && !a.orders.some(o => o.start === slot) : a.lastStatus === 'QUOTING') && decisionStage(policy(a.id).strategy) === stage).flatMap(a => {
           let entryKey;
           const currentPolicy = policy(a.id);
           const input = buildDecisionContext({ market: marketInput, indicators, account: account(a), policy: currentPolicy, battleEmotion: state.config.emotionLevel, battleActionUrge: state.config.actionUrgeLevel, peers,
             frozenDivination: state.entryRound?.oracles[a.id] });
+          const engine=decisionProvider.describeFor?.(input)||decisionProvider.describe();
+          const external=!['mock','off','offline','legacy'].includes(engine.mode);
+          if(external)input.policy.review_mode='model';
+          input.policy.controls_revision=state.config.controlsRevision||0;
           if (input.divination && state.entryRound && !state.entryRound.oracles[a.id]) {
             state.entryRound.oracles[a.id] = input.divination; oracleChanged = true;
           }
           if (signalOnly) {
             input.market.entry_mode = 'signal';
             input.market.seconds_to_close = Math.max(0, (slot + roundMs - now()) / 1000);
-            let signal;
-            try { signal = entrySignal(input, indicators.indicatorCandleCloseTime ?? indicators.candles?.bars?.at(-1)?.closeTime); }
-            catch { signal = null; }
             const previous = state.entryRound.attempts[a.id];
-            if (!signal || (previous && (now() - previous.at < ENTRY_COOLDOWN_MS || previous.keys.includes(signal.key)))) {
-              if (a.lastStatus === 'QUOTING') { a.lastStatus = 'SKIPPED'; a.reason = '等待进场信号'; }
+            let opportunity;
+            try{
+              const candle=indicators.indicatorCandleCloseTime??indicators.candles?.bars?.at(-1)?.closeTime;
+              if(external)opportunity=modelReview(input,candle,previous,now());
+              else{
+                const signal=entrySignal(input,candle);
+                opportunity=!signal?{reason:entryWaitReason(input)}:previous&&(now()-previous.at<ENTRY_COOLDOWN_MS||previous.keys.includes(signal.key))?{reason:'AI_WAIT_MARKET_CHANGE'}:signal;
+              }
+            }catch(cause){opportunity={reason:cause.code||'AI_INDICATOR_MISSING'};}
+            if (!opportunity.key) {
+              a.waitReason=opportunity.reason;
+              if (a.lastStatus === 'QUOTING') { a.lastStatus = 'SKIPPED'; a.reason = opportunity.reason; }
               return [];
             }
-            state.entryRound.attempts[a.id] = { at: now(), keys: [...(previous?.keys || []), signal.key] };
-            entryKey = signal.key;
+            state.entryRound.attempts[a.id] = { at: now(), keys: [...(previous?.keys || []), opportunity.key], count:(previous?.count??previous?.keys?.length??0)+1 };
+            entryKey = opportunity.key;
             a.lastStatus = 'QUOTING';
+          }else if(currentPolicy.strategy==='showoff'&&!entrySignal(input)){
+            a.lastStatus='SKIPPED';a.reason=a.waitReason='WAIT_CZ_BET';return [];
           }
-          const inputEventId = record('DECISION_INPUT', { roundId: String(slot), agentId: a.id, snapshotId: captureSnapshot(), input, policy: currentPolicy });
+          a.waitReason=null;
+          const inputEventId = record('DECISION_INPUT', { roundId: String(slot), agentId: a.id, snapshotId: captureSnapshot(), input, policy: currentPolicy, ...(entryKey?{entryKey}:{}) });
           return { a, currentPolicy, input, inputEventId, entryKey };
         });
         if (signalOnly && !decisionJobs.length) { if (oracleChanged) save('round-reading'); continue; }
@@ -560,7 +613,11 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
           try {
             assertDecisionInputs(input);
             if (signalOnly && !validAttempt()) throw error('QUOTE_WINDOW_MISSED');
-            const raw = await decisionProvider.decide(input, { deadlineMs, now, isCancelled: () => !validAttempt() });
+            const raw = await decisionProvider.decide(input, { deadlineMs, now, isCancelled: () => !validAttempt(),onRequest:request=>{
+              if(!validAttempt())throw error('QUOTE_WINDOW_MISSED');
+              record('MODEL_REQUEST',{roundId:String(slot),agentId:a.id,inputEventId,request});
+              save('model-request');
+            } });
             record('MODEL_RESPONSE', { roundId: String(slot), agentId: a.id, inputEventId, response: raw });
             if (!state.enabled || attemptVersion !== controlVersion) throw error('QUOTE_WINDOW_MISSED');
             const plan = validateDecision(raw, { input, indicators, policy: currentPolicy, now: now() });
@@ -592,7 +649,7 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
               marketTopicId: market.marketTopicId, tokenId, direction: plan.direction, amount: plan.stake,
               side: 'BUY', orderType: 'MARKET',
               expiresAt: quote.expiresAt ? Math.min(quote.expiresAt, slot + roundMs - ENTRY_CLOSE_BUFFER_MS) : deadlineMs,
-              createdAt: now(), mode: 'paper', marketSource: market.marketSource || 'binance-prediction',
+              createdAt: now(), mode: 'paper', simulationOnly:plan.stake<MIN_STAKE, marketSource: market.marketSource || 'binance-prediction',
               paperEstimate: { shares: quote.shares, averagePrice: quote.averagePrice, source: quote.source || 'real-order-book', feeShares: quote.feeShares ?? null } };
             record('ORDER_INTENT', { roundId: String(slot), agentId: a.id, intent });
             a.cash = Math.round((a.cash - plan.stake) * 1e8) / 1e8;
@@ -609,6 +666,7 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
             if (signalOnly && e.requestStarted === false && state.entryRound?.slot === slot) {
               const attempt = state.entryRound.attempts[a.id];
               attempt.keys = attempt.keys.filter(key => key !== entryKey);
+              attempt.count=Math.max(0,(attempt.count||1)-1);
             }
             a.lastStatus = 'SKIPPED'; a.reason = e.code || 'AI_DECISION_FAILED';
             a.lastDecision = a.lastDecision?.roundId === input.market.round_id
@@ -632,6 +690,7 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
     if (busy || storageFailed) return;
     busy = true;
     try {
+      const tickStartedAt = now();
       if (leaseEnabled && state.enabled && state.lastSeenAt != null && now() - state.lastSeenAt > leaseMs) {
         state.enabled = false;
         state.lifecycle = 'paused';
@@ -655,7 +714,9 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
         let market = prepared;
         prepared = null;
         if (state.enabled && !state.rounds.includes(slot)) {
-          const onBoundary = now() - slot <= 1500;
+          // Settlement I/O must not make a timely tick look like a late arrival.
+          // The elapsed quote window below still expires after ten seconds.
+          const onBoundary = tickStartedAt - slot <= 1500;
           if (onBoundary && source.refreshMarket) {
             try { market = await readSource('refreshMarket', market, slot, normalizedAsset, roundMs); }
             catch (e) { market = null; failure = e.code || 'MARKET_UNAVAILABLE'; }
@@ -666,7 +727,7 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
           const eligible = state.enabled && attemptVersion === controlVersion && onBoundary && now() - slot < 10000 && market && Number(market.startDate) === slot;
           state.entryRound = eligible ? { slot, market, oracles: {}, attempts: {} } : null;
           lastEntryPoll = now();
-          for (const a of state.agents) a.lastStatus = !state.enabled ? 'PAUSED' : a.cash < (integratedDecisions ? MIN_STAKE : STAKE) ? 'INSUFFICIENT_FUNDS' : eligible ? 'QUOTING' : 'SKIPPED';
+          for (const a of state.agents) a.lastStatus = !state.enabled ? 'PAUSED' : a.cash < (integratedDecisions ? minimumStake(a) : STAKE) ? 'INSUFFICIENT_FUNDS' : eligible ? 'QUOTING' : 'SKIPPED';
           for (const a of state.agents) if (a.lastStatus !== 'QUOTING') record('ROUND_SKIPPED', { roundId: String(slot), agentId: a.id, reason: a.lastStatus === 'INSUFFICIENT_FUNDS' ? a.lastStatus : 'MARKET_OR_BOUNDARY_UNAVAILABLE' });
           save('round-started'); // Persist the attempt before I/O, so restart never duplicates a round.
           if (eligible) {
@@ -697,7 +758,7 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
       const entryRound = state.entryRound;
       if (integratedDecisions && state.enabled && state.config.realtimeEntry && entryRound &&
           now() >= entryRound.slot && now() < entryRound.slot + roundMs - ENTRY_CLOSE_BUFFER_MS &&
-          now() - lastEntryPoll >= ENTRY_POLL_MS && state.agents.some(a => a.cash >= MIN_STAKE && !a.orders.some(o => o.start === entryRound.slot))) {
+          now() - lastEntryPoll >= ENTRY_POLL_MS && state.agents.some(a => a.cash >= minimumStake(a) && !a.orders.some(o => o.start === entryRound.slot))) {
         lastEntryPoll = now();
         await decideRound(entryRound.market, entryRound.slot, controlVersion, true);
       }
@@ -717,7 +778,7 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
           } else markChanged('market-prepare-failed');
         }
       }
-      if (state.enabled && !hasOpenOrders() && state.agents.every(agent => agent.cash < (integratedDecisions ? MIN_STAKE : STAKE))) finish('BALANCE_DEPLETED');
+      if (state.enabled && !hasOpenOrders() && state.agents.every(agent => agent.cash < (integratedDecisions ? minimumStake(agent) : STAKE))) finish('BALANCE_DEPLETED');
     } catch (e) {
       failure = e.code || 'SIMULATION_ERROR';
       if (pauseOnError && !['ended', 'settling'].includes(state.lifecycle)) {
@@ -773,6 +834,7 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
       if (state.config.emotionLevel === emotionLevel) return snapshot();
       controlVersion++;
       state.config.emotionLevel = emotionLevel;
+      state.config.controlsRevision=(state.config.controlsRevision||0)+1;
       record('EMOTION_CHANGED', { emotionLevel });
       touchState();
       save();
@@ -785,6 +847,7 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
       if (state.config.actionUrgeLevel === actionUrgeLevel) return snapshot();
       controlVersion++;
       state.config.actionUrgeLevel = actionUrgeLevel;
+      state.config.controlsRevision=(state.config.controlsRevision||0)+1;
       record('ACTION_URGE_CHANGED', { actionUrgeLevel });
       touchState();
       save();
@@ -802,6 +865,15 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
       touchState(); save();
       return snapshot();
     },
+    pauseForAiOutage(details) {
+      if (!state.enabled || ['ended', 'settling'].includes(state.lifecycle)) return;
+      controlVersion++;
+      state.enabled = false; state.lifecycle = 'paused'; state.endReason = 'AI_CONNECTION_OUTAGE';
+      state.aiConnectionFailure = structuredClone(details);
+      for (const agent of state.agents) if (agent.lastStatus === 'QUOTING') agent.lastStatus = 'PAUSED';
+      record('PAUSED', { reason: state.endReason, details });
+      save('ai-connection-outage');
+    },
     setEnabled(value) {
       if (storageFailed) throw error('STORAGE_ERROR');
       if (['ended', 'settling'].includes(state.lifecycle)) {
@@ -812,6 +884,7 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
       state.enabled = Boolean(value);
       state.lifecycle = state.enabled ? 'running' : 'paused';
       state.endReason = state.enabled ? null : state.endReason === 'CLIENT_DISCONNECTED' ? state.endReason : 'USER_PAUSED';
+      if (state.enabled) state.aiConnectionFailure = null;
       touchState();
       save();
       return snapshot();

@@ -8,7 +8,7 @@ const calculate=(klines=rows(time),book=depth)=>calculateIndicatorSnapshot({symb
 const near=(actual,expected,tolerance=1e-8)=>assert.ok(Math.abs(actual-expected)<tolerance,`${actual} != ${expected}`);
 
 test('26 input groups share one catalog; analytic ramp checks extended formulas and units',()=>{
-  assert.equal(Object.keys(indicators).length,26);assert.equal(Object.keys(profiles).length,16);
+  assert.equal(Object.keys(indicators).length,26);assert.equal(Object.keys(profiles).length,17);
   const s=calculate();
   assert.equal(s.completedCandles,199);
   assert.ok(Object.values(s.availability).every(status=>status==='READY'));

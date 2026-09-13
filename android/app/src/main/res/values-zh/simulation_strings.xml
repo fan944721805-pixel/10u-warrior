@@ -1,0 +1,7 @@
+<resources>
+    <string name="simulation_channel">后台模拟</string>
+    <string name="simulation_title">10U 战神 · 模拟对局</string>
+    <string name="simulation_running">对局运行中 · 点击查看</string>
+    <string name="simulation_settling">已暂停新下注 · 等待订单结算</string>
+    <string name="simulation_pause">暂停全部下注</string>
+</resources>

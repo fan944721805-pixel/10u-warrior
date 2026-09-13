@@ -1,7 +1,26 @@
 (() => {
   const params = new URLSearchParams(location.search);
   const nativeRuntime = Boolean(window.Capacitor?.isNativePlatform?.());
-  const useOfflineRuntime = nativeRuntime || location.protocol === 'file:' || params.get('offline') === '1';
+  if (nativeRuntime && params.get('offline') !== '1') {
+    window.Warrior = window.Warrior || {};
+    try {
+      const runtime = window.WarriorNativeService.create(window.Capacitor.Plugins?.NativeRuntime);
+      window.Warrior.simulationApi = runtime.api;
+      window.Warrior.request = runtime.request;
+    } catch (cause) {
+      // A damaged/unavailable native ledger is never silently replaced by the
+      // old random-price demo or a fresh balance.
+      window.Warrior.mobileStartupError = cause.code || 'MOBILE_STORAGE_UNAVAILABLE';
+      const unavailable = async () => { throw cause; };
+      window.Warrior.simulationApi = new Proxy({ mode: 'native', walletSupported: false, keepInBackground: false, subscribe: () => () => {}, release: () => false }, {
+        get: (target, key) => Object.hasOwn(target, key) ? target[key] : unavailable,
+      });
+      window.Warrior.request = unavailable;
+    }
+    document.documentElement.dataset.runtime = 'native';
+    return;
+  }
+  const useOfflineRuntime = location.protocol === 'file:' || params.get('offline') === '1';
   const offline = useOfflineRuntime
     ? window.WarriorOfflineSimulation?.createOfflineSimulation({ storage: window.localStorage })
     : null;
@@ -39,12 +58,13 @@
     return payload;
   }
 
-  async function ensureStrategySupport(configOrAgents = []) {
+  async function ensureStrategySupport(configOrAgents = [], { creation = false } = {}) {
     const config = Array.isArray(configOrAgents) ? {} : (configOrAgents || {});
     const agents = Array.isArray(configOrAgents) ? configOrAgents : (config.agents || []);
     const catalog = window.WarriorStrategyCatalog;
     const extended = agents.some(agent => !['aggressive','smart','conservative'].includes(agent.strategy) || (agent.indicators || []).some(key=>!catalog.defaultIndicators.includes(key)));
     const { capabilities } = await request('/api/simulation/strategies');
+    if (creation && capabilities?.idempotentCreation !== true) throw Object.assign(new Error('新玩法需要重启本机服务后使用。'), { code: 'STRATEGY_SERVICE_UPGRADE_REQUIRED' });
     if (agents.some(a=>a.aiConnectionId!==undefined) && capabilities?.aiPerBattleModels!==true) throw Object.assign(new Error('本局模型设置需要重启本机服务后使用。'),{code:'STRATEGY_SERVICE_UPGRADE_REQUIRED'});
     if (config.realtimeEntry === true && capabilities?.realtimeEntry !== true) throw Object.assign(new Error('实时进场需要重启本机服务后使用。'), {code:'STRATEGY_SERVICE_UPGRADE_REQUIRED'});
     const missingFeature = agents.some(agent=>!capabilities?.strategies?.includes(agent.strategy) || (agent.indicators || []).some(key=>!capabilities?.indicators?.includes(key)));
@@ -59,7 +79,9 @@
     snapshot: async battleId => offline.snapshot(battleId || 'default'),
     report: async battleId => offline.snapshot(battleId || 'default'),
     subscribe: () => () => {},
-    create: async (name, config) => offline.create(name, config),
+    create: async (name, config, requestId) => offline.create(name, config, requestId),
+    storageStatus: () => offline.storageStatus(),
+    recoverStorage: async action => offline.recoverStorage(action),
     setEnabled: async (battleId, enabled) => offline.setEnabled(battleId, enabled),
     topUp: async (battleId,agentId,amount,requestId)=>offline.topUp(battleId,agentId,amount,requestId),
     setEmotion: async (battleId, emotionLevel) => offline.setEmotion(battleId, emotionLevel),
@@ -90,13 +112,14 @@
       });
       return () => stream.close();
     },
-    create: async (name, config) => { await ensureStrategySupport(config); return request('/api/simulation/battles', {
+    create: async (name, config, requestId) => { await ensureStrategySupport(config, { creation: true }); return request('/api/simulation/battles', {
       method: 'POST',
-      body: JSON.stringify({ name, config, clientId }),
+      body: JSON.stringify({ name, config, clientId, requestId }),
     }); },
     setEnabled: (battleId, enabled) => request('/api/simulation/control', {
       method: 'POST',
       body: JSON.stringify({ battleId, enabled, clientId }),
+      timeoutMs: 70000,
     }),
     setEmotion: (battleId, emotionLevel) => request('/api/simulation/emotion', {
       method: 'POST',
@@ -126,6 +149,8 @@
 
   window.Warrior = window.Warrior || {};
   simulationApi.clientId = clientId;
+  // Only the installed Android app continues local simulation while hidden.
+  simulationApi.keepInBackground = Boolean(offline && nativeRuntime && window.Capacitor.getPlatform?.() === 'android');
   if (!offline) {
     simulationApi.prices = symbol => request(`/api/market/prices?symbol=${encodeURIComponent(symbol)}`, { timeoutMs: 10000 });
     simulationApi.intent = (battleId, intentId) => request(`/api/simulation/intent?battleId=${encodeURIComponent(battleId)}&intentId=${encodeURIComponent(intentId)}`);
