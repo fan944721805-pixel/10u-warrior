@@ -6,11 +6,11 @@ Android 版独立运行，无需电脑或自建服务器。手机通过 Android 
 
 联网对局、收藏、AI 配置和战绩存入 Android 应用私有目录，由 Android Keystore 的 AES-GCM 密钥加密；写入确认后才推进账本。AI Key 不另存到 localStorage 或 IndexedDB。旧本地收藏保留备份后导入服务集合，已有正式账本继续读取；随机离线演示已退出产品入口，其成绩不迁入正式账本。
 
-> 当前产物是由 Android 调试密钥签名的测试 APK，可以侧载安装，但不是正式发布包。对外发布前必须固定包名、生成并妥善保管发布密钥，再生成 release APK/AAB。
+> 当前 GitHub 产物是非调试的 Release APK，沿用 Android 测试证书供侧载安装，不是商店签名包。包名为 `com.tenuwarrior.app`，0.2.1 的 versionCode 为 17；商店上架前仍须配置专用发行签名。
 
 ## GitHub 试用 Release
 
-0.1.9 的 GitHub 试用 APK 使用非调试的 Release 构建变体，并显式沿用本机已有测试证书，支持同签名旧测试版覆盖安装。它不是使用正式发行证书的商店发布包。测试签名不上传；构建与验签方式依据 [Android 签名说明](https://developer.android.com/studio/publish/app-signing) 和 [apksigner](https://developer.android.com/tools/apksigner)。
+0.2.1 延续 0.1.9 以来 GitHub 侧载包的 Release 构建和本机测试证书，支持同签名旧测试版覆盖安装。它不是使用专用发行证书的商店发布包。测试签名不上传；构建与验签方式依据 [Android 签名说明](https://developer.android.com/studio/publish/app-signing) 和 [apksigner](https://developer.android.com/tools/apksigner)。本版构建、资源与下载核验见[交付记录](docs/strategy-system/12-production-migration.md)。
 
 ```powershell
 npm run check
@@ -108,9 +108,9 @@ Android 应用 ID 为 `com.tenuwarrior.app`，版本以 `android/app/build.gradl
 
 独立验证命令：`node --test test/mobile-runtime.test.js`（共用运行包、断网结算、重启、存储失败与 AI 路由），`npm run mobile:verify`（需 Playwright，四语言、窄屏、原生桥模拟、无电脑 API 请求）。浏览器原生桥模拟不等于真实 Android 网络或加密存储验证。
 
-## 正式发布前
+## 商店发布前
 
-正式分发需另外完成以下工作：
+商店发行需另外完成以下工作，不应与当前 GitHub 侧载预发布混为一谈：
 
 1. 确认最终应用 ID 和版本号。
 2. 生成专用 release keystore，私钥和密码不得提交到仓库。
