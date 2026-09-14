@@ -8,6 +8,8 @@ third-party packages, service responses, trademarks, or branding.
   its executable or `node_modules`. Its use remains subject to the provider's terms.
 - `ethers` 6.17.0: MIT.
 - `qrcode` 1.5.4: MIT.
+- `@noble/curves` 1.2.0: MIT, used for the mobile authorization public key.
+- `jsqr` 1.4.0: Apache-2.0, development-only independent QR verification.
 - Transitive dependencies retain their respective licenses, recorded in
   `package-lock.json` and installed package metadata.
 

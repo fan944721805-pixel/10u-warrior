@@ -1,5 +1,6 @@
 /* Read-only Android widget projection. Never submits an order or changes a battle. */
 ((root) => {
+  const values = typeof module === 'object' && module.exports ? require('./market-values') : root.Warrior.marketValues;
   const statuses = { running:'运行中', paused:'已暂停', ended:'已结束', settling:'结算中',
     reconnecting:'连接恢复中', 'retry-paused':'等待重试', 'awaiting-settlement':'等待结算' };
   function project(battles, { now = Date.now(), t = v => v, label = p => p.strategy || 'AI', icon = () => '', network = 'online' } = {}) {
@@ -7,16 +8,29 @@
     const rows = battles.filter(b => !b.placeholder).flatMap(b => (b.agents || []).map(a => {
       const orders = (a.orders || []).filter(o => o.status === 'OPEN');
       const current = orders.filter(o => o.start <= now && o.end > now);
+      const pendingBets = values.pendingBets(a.orders, now);
+      const snapshots = new Map((b.auditTrail || []).filter(e => e.type === 'MARKET_SNAPSHOT').map(e => [e.id,e]));
+      const reference = values.betReferencePrice(current.at(-1), snapshots);
       const direction = [...new Set(current.map(o => o.direction))].map(d => t(d === 'UP' ? '看涨' : d === 'DOWN' ? '看空' : '观望')).join(' / ');
       const profit = a.equity - b.config.initialBalance - (a.addedCapital || 0);
       const state = network === 'error' ? '行情连接中断' : b.error || b.aiConnectionFailure ? '等待恢复' : statuses[b.status] || '等待更新';
       return { battleId:b.id, agentId:a.id, name:label(a.policy || {}), battleName:b.name,
         icon:icon(a.policy || {}), coin:a.policy?.coin || '',
+        updatedLabel:t('更新于'),
+        preparation:a.preparation?.status === 'calculating' ? t('下一轮提前计算中') : a.preparation?.status === 'ready' ? t('下一轮策略已就绪') : a.preparation?.status === 'failed' ? t('提前计算未完成，开局重试') : '',
         funds:`${t('模拟资金')}  ${amount(a.equity)} U`,
         profit:`${t('已结算收益')}  ${profit > 0 ? '+' : ''}${amount(profit)} U`,
         fundsLabel:t('模拟资金'), fundsValue:`${amount(a.equity)} U`,
         profitLabel:t('已结算收益'), profitValue:`${profit > 0 ? '+' : ''}${amount(profit)} U`,
         roundLabel:t('本轮下注'),
+        cashLabel:t('可用'), cashValue:`${amount(a.cash)} U`,
+        reservedLabel:t('冻结'), reservedValue:`${amount(a.reserved)} U`,
+        betValue:current.length ? `${amount(pendingBets.currentAmount)} U` : '—',
+        previousLabel:t('往期待结算'), previousValue:pendingBets.previous.length ? `${amount(pendingBets.previousAmount)} U` : '',
+        referenceLabel:t('下注参考价'), referenceValue:reference == null ? '' : `${amount(reference)} USDT`,
+        winLabel:t('胜率'), winValue:a.winRate == null ? '—' : `${amount(a.winRate * 100)}%`,
+        winRecord:Number.isFinite(a.wins) && Number.isFinite(a.losses) ? `${a.wins}/${a.wins + a.losses}` : '—',
+        detailLabel:t('查看详情'),
         positive:Number.isFinite(profit) && profit >= 0,
         action:direction || t(orders.length ? '等待结算' : '观望'),
         status:t(state), key:JSON.stringify([b.id,a.id]) };
@@ -26,6 +40,8 @@
       stale:t('更新中断，点击打开应用'), unavailable:t('读取失败，显示上次快照'), paper:t('模拟'), open:t('打开应用') } };
   }
   if (typeof module === 'object' && module.exports) { module.exports = { project }; return; }
+  root.WarriorWidgetProject = project;
+  if (root.document.documentElement.dataset.cardLab === 'true') return;
   if (!root.Capacitor?.isNativePlatform?.()) return;
   const api = root.Warrior?.simulationApi;
   const plugin = root.Capacitor.Plugins?.StrategyWidget || root.Capacitor.registerPlugin?.('StrategyWidget');
@@ -46,7 +62,7 @@
       // was still available even if the ledger did not change. No polling of prices.
       if (signature !== lastSignature || Date.now() - lastSent >= 25000) {
         if (api.serviceOwned) {
-          const words = ['模拟资金','已结算收益','本轮下注','看涨','看空','观望','等待结算','行情连接中断','等待恢复',...Object.values(statuses)];
+          const words = ['更新于','下一轮提前计算中','下一轮策略已就绪','提前计算未完成，开局重试','模拟资金','已结算收益','本轮下注','可用','冻结','往期待结算','下注参考价','胜率','查看详情','看涨','看空','观望','等待结算','行情连接中断','等待恢复',...Object.values(statuses)];
           await api.configureWidget({ labels:payload.labels, words:Object.fromEntries(words.map(word=>[word,t(word)])),
             names:payload.rows.map(row=>({key:row.key,name:row.name,icon:row.icon})) });
         } else await plugin.update({ snapshot:payload });

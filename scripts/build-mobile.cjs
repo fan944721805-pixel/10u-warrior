@@ -15,4 +15,4 @@ esbuild.build({
   } }],
   define: { 'process.pid': '0' },
   logLevel: 'info',
-}).catch(() => { process.exitCode = 1; });
+}).then(() => require('./build-client.cjs').buildClient({native:true})).catch(error => { console.error(error); process.exitCode = 1; });

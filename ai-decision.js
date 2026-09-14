@@ -1,5 +1,10 @@
+const cardTraits=require('./card-traits.cjs');
+const { samplingFor,deepseekNonThinking } = require('./ai-sampling.cjs');
+const cardCapital=require('./card-capital.cjs');
+const globalControl = require('./global-controls.cjs');
 const crypto = require('node:crypto');
 const DECISION_META = Symbol('trusted-decision-metadata');
+const { cardPolicy } = require('./card-policy.cjs');
 const { alignRoundDirection } = require('./round-direction');
 
 const {
@@ -39,6 +44,8 @@ function boundedInteger(value, fallback, min, max) {
 }
 
 function normalizePolicy(value, id) {
+  if((value?.capitalVersion||value?.traitsVersion)&&!value.cardSnapshot)throw decisionError('CARD_CAPITAL_VERSION_INVALID');
+  if (value?.cardSnapshot !== undefined) value = cardPolicy(value);
   const fallback = DEFAULT_AGENT_POLICIES[id] || {
     id,
     name: `AI ${id}`,
@@ -59,11 +66,12 @@ function normalizePolicy(value, id) {
   const requestedIndicators = !savedIndicators || legacyCoreDefaults ? rules.recommended : savedIndicators;
   const indicators = [...new Set([...(requestedIndicators.length >= 3 ? requestedIndicators : rules.recommended), ...rules.required])];
   const configuredCap = boundedInteger(value?.maxStakePct, fallback.maxStakePct, 5, 100);
-  const maxStakePct = rules.fixedStakeChoices ? 100 : Math.min(configuredCap, rules.maxStakePct);
+  const maxStakePct = value?.capitalVersion==='SC-2'?Math.min(value.capitalLimits.maxStakePct,rules.maxStakePct):rules.fixedStakeChoices?100:Math.min(configuredCap,rules.maxStakePct);
   const requestedCoin = String(value?.coin || fallback.coin || 'BTC').toUpperCase();
   if (value?.aiConnectionId !== undefined && !['none','deepseek','openai','anthropic','custom'].includes(value.aiConnectionId)) throw decisionError('AI_CONNECTION_NOT_TESTED');
   return {
     id,
+    ...(value?.cardSnapshot ? {cardSnapshot:value.cardSnapshot,cardPolicyHash:value.cardPolicyHash,cardTraits:value.cardTraits,traitsVersion:value.traitsVersion,capitalVersion:value.capitalVersion,...(value.capitalLimits?{capitalLimits:value.capitalLimits}:{})} : {}),
     ...(value?.sourceAgentId ? {sourceAgentId:String(value.sourceAgentId).slice(0,60),aiModelLabel:String(value.aiModelLabel||'').slice(0,160)} : {}),
     ...(value?.aiConnectionId !== undefined ? {aiConnectionId:value.aiConnectionId,aiConnectionRevision:typeof value.aiConnectionRevision==='string'?value.aiConnectionRevision:null} : {}),
     name: String(value?.name || fallback.name).trim().slice(0, 18) || fallback.name,
@@ -75,7 +83,7 @@ function normalizePolicy(value, id) {
     actionUrge: boundedInteger(value?.actionUrge, rules.actionUrge, 0, 100),
     emotionSensitivity: boundedInteger(value?.emotionSensitivity, rules.emotionSensitivity, 0, 100),
     maxStakePct,
-    allowAllIn: rules.allowAllIn && maxStakePct === 100 && (rules.fixedStakeChoices || value?.allowAllIn !== false) ? true : false,
+    allowAllIn: rules.allowAllIn && maxStakePct === 100 && (value?.capitalVersion==='SC-2'?value.capitalLimits.allowAllIn:(rules.fixedStakeChoices || value?.allowAllIn !== false)) ? true : false,
     indicators,
     minConfidence: rules.minConfidence,
     baseStakePct: rules.baseStakePct,
@@ -109,13 +117,17 @@ function assertDecisionInputs(input) {
       (input.policy.required_indicators || []).some(field=>!completeIndicator(input.indicators[field]))) throw decisionError('AI_INDICATOR_MISSING');
 }
 
-function buildDecisionContext({ market, indicators, account, policy, battleEmotion = 0, battleActionUrge = 0, peers = null, frozenDivination = null }) {
-  const capital=capitalManagement({strategy:policy.strategy,...account,recoveryActive:account.capitalRecovery});
-  const personalActionUrge=policy.actionUrge;
-  const actionUrge=effectiveActionUrge(personalActionUrge,battleActionUrge);
-  const emotion=emotionAdjustment({strategy:policy.strategy,actionUrge,emotionSensitivity:policy.emotionSensitivity,battleEmotion,winStreak:account.winStreak,lossStreak:account.lossStreak});
+function buildDecisionContext({ market, indicators, account, policy, battleEmotion = 0, battleActionUrge = 0, globalControls, peers = null, frozenDivination = null }) {
+  const capital=policy.capitalVersion==='SC-2'?cardCapital.context(policy,account):capitalManagement({strategy:policy.strategy,...account,recoveryActive:account.capitalRecovery});
+  const controls=globalControl.fromConfig({globalControls,emotionLevel:battleEmotion,actionUrgeLevel:battleActionUrge});
+  const personalTilt=account.personalEmotion?.tilt||0;
+  if(policy.cardSnapshot){battleEmotion=globalControl.effective(personalTilt,controls.tilt);battleActionUrge=controls.urge;}
+  const traitEffects=policy.traitsVersion==='CT-1'?cardTraits.effects(account.cardTraitState,policy.cardTraits,{netEquity:capital.netEquity,initial:account.baseInitialBalance??account.initialBalance}):null;
+  const personalActionUrge=Math.min(100,policy.actionUrge+(traitEffects?.urgeBonus||0));
+  const actionUrge=policy.cardSnapshot?globalControl.effective(personalActionUrge,battleActionUrge):effectiveActionUrge(personalActionUrge,battleActionUrge);
+  const emotion=emotionAdjustment({strategy:policy.strategy,actionUrge,emotionSensitivity:policy.emotionSensitivity,cardEmotion:Boolean(policy.cardSnapshot),battleEmotion,winStreak:account.winStreak,lossStreak:account.lossStreak});
   const countertrade=eligibleCountertradePeers(policy.strategy,actionUrge,{agentId:policy.id,roundId:market.roundId,asset:`${policy.coin}USDT`,peers});
-  return {
+  const input = {
     ...(peers ? {peers:structuredClone(policy.strategy==='contrarian'?peers:{...peers,agents:peers.agents.map(({performance,...peer})=>peer)})} : {}),
     market: {
       asset: `${policy.coin}USDT`,
@@ -133,6 +145,7 @@ function buildDecisionContext({ market, indicators, account, policy, battleEmoti
     account: {
       balance: Number(account.balance),
       initial_balance: Number(account.initialBalance ?? 100),
+      base_initial_balance:Number(account.baseInitialBalance??account.initialBalance??100),added_capital:Number(account.addedCapital||0),capital_stopped:Boolean(account.capitalStopped),
       capital_recovery: capital.recoveryActive,
       wins: Number(account.wins),
       losses: Number(account.losses),
@@ -142,9 +155,12 @@ function buildDecisionContext({ market, indicators, account, policy, battleEmoti
     },
     policy: {
       agent_id: policy.id,
+      ...(policy.cardSnapshot ? {card_snapshot:structuredClone(policy.cardSnapshot),card_policy_hash:policy.cardPolicyHash,card_traits:[...policy.cardTraits],card_emotion:true,personal_tilt:personalTilt,global_controls:controls} : {}),
       ...(policy.aiConnectionId !== undefined ? {ai_connection_id:policy.aiConnectionId,ai_connection_revision:policy.aiConnectionRevision} : {}),
       strategy: policy.strategy,
-      decision_variance: policy.decisionVariance,
+      ...(traitEffects?{traits_version:policy.traitsVersion,trait_effects:traitEffects}:{}),
+      ...(policy.capitalVersion?{capital_version:policy.capitalVersion,capital_limits:policy.capitalLimits}:{}),
+      decision_variance: policy.cardSnapshot?globalControl.effective(policy.decisionVariance,controls.variance):policy.decisionVariance,
       action_urge: actionUrge,
       personal_action_urge: personalActionUrge,
       battle_action_urge: Math.max(0,Math.min(100,Math.round(Number(battleActionUrge)||0))),
@@ -159,7 +175,7 @@ function buildDecisionContext({ market, indicators, account, policy, battleEmoti
       effective_minimum_confidence: Number(emotion.minimumConfidence.toFixed(2)),
       max_stake_pct: capital.recoveryActive?100:policy.maxStakePct,
       capital_management: capital,
-      min_stake_usdt: capital.recoveryActive?.01:MIN_STAKE,
+      min_stake_usdt: policy.capitalVersion==='SC-2'?cardCapital.MINIMUM:capital.recoveryActive?.01:MIN_STAKE,
       countertrade_stake_multiplier: policy.strategy==='contrarian'?countertrade.stakeMultiplier:1,
       allow_all_in: capital.recoveryActive||policy.allowAllIn,
       minimum_confidence: policy.minConfidence,
@@ -170,18 +186,23 @@ function buildDecisionContext({ market, indicators, account, policy, battleEmoti
       required_indicators: PROFILE_RULES[policy.strategy].required.map(key=>indicatorCatalog[key].field),
     },
   };
+  if(traitEffects)input.policy.trait_effects=cardTraits.effects(account.cardTraitState,policy.cardTraits,{netEquity:capital.netEquity,initial:account.baseInitialBalance??account.initialBalance,resonant:cardTraits.strongResonance(coreSnapshot(input),policy.strategy)});
+  return input;
 }
 
 function countertradeForInput(input) {
   return eligibleCountertradePeers(input.policy.strategy,input.policy.action_urge,{agentId:input.policy.agent_id,roundId:input.market.round_id,asset:input.market.asset,peers:input.peers});
 }
 function capitalForInput(input) {
+  if(input.policy.capital_version==='SC-2')return cardCapital.fromInput(input);
   return capitalManagement({strategy:input.policy.strategy,balance:input.account.balance,initialBalance:input.account.initial_balance,
     openStake:input.account.open_stake||0,recoveryActive:input.account.capital_recovery});
 }
 function countertradeMultiplier(input) {
   return input.policy.strategy==='contrarian'?countertradeForInput(input).stakeMultiplier:1;
 }
+function minimumForInput(input){return input.policy.capital_version==='SC-2'?cardCapital.MINIMUM:capitalForInput(input).recoveryActive?.01:MIN_STAKE;}
+function normalForInput(input,confidence,legacy){return input.policy.capital_version==='SC-2'?cardCapital.normalPct(input,confidence):normalStakePercent(legacy);}
 function decisionStakeChoices(input) {
   const profile=PROFILE_RULES[input.policy.strategy],emotion=emotionForInput(input);
   const amountFor=pct=>{
@@ -190,14 +211,18 @@ function decisionStakeChoices(input) {
   };
   if(capitalForInput(input).recoveryActive) return {normal:[],probe:null,all_in:input.account.balance>=.01?{
     ...amountFor(100),risk_mode:'ALL_IN',requires:{strategyPermission:true,minimumConfidence:emotion.minimumConfidence,positiveEdge:true}}:null};
-  const normal=[0,...profile.tierConfidence].map((minimum,index)=>{
+  const normal=input.policy.capital_version==='SC-2'?(profile.fixedStakeChoices?[50]:profile.stakeTiers).flatMap(pct=>{
+    const minimum=[emotion.minimumConfidence,...profile.tierConfidence,100].sort((a,b)=>a-b).find(conf=>conf>=emotion.minimumConfidence&&cardCapital.normalPct(input,conf)>=pct);
+    const amount=amountFor(pct);
+    return minimum!==undefined&&amount.stake_usdt>=cardCapital.MINIMUM?[{minimum_confidence:minimum,maximum_confidence:100,...amount,risk_mode:'NORMAL'}]:[];
+  }):[0,...profile.tierConfidence].map((minimum,index)=>{
     const maximum=profile.tierConfidence[index]===undefined?100:profile.tierConfidence[index]-.000001;
-    const pct=normalStakePercent({countertradeMultiplier:countertradeMultiplier(input),balance:input.account.balance,initialBalance:input.account.initial_balance,openStake:input.account.open_stake||0,recoveryActive:input.account.capital_recovery,strategy:input.policy.strategy,baseStakePct:input.policy.base_stake_pct,maxStakePct:input.policy.max_stake_pct,confidence:minimum,winStreak:input.account.win_streak,lossStreak:input.account.loss_streak,emotionSensitivity:input.policy.emotion_sensitivity,battleEmotion:input.policy.battle_emotion});
+    const pct=normalForInput(input,minimum,{countertradeMultiplier:countertradeMultiplier(input),balance:input.account.balance,initialBalance:input.account.initial_balance,openStake:input.account.open_stake||0,recoveryActive:input.account.capital_recovery,strategy:input.policy.strategy,baseStakePct:input.policy.base_stake_pct,maxStakePct:input.policy.max_stake_pct,confidence:minimum,winStreak:input.account.win_streak,lossStreak:input.account.loss_streak,emotionSensitivity:input.policy.emotion_sensitivity,cardEmotion:input.policy.card_emotion,battleEmotion:input.policy.battle_emotion});
     return {minimum_confidence:Math.max(minimum,emotion.minimumConfidence),maximum_confidence:maximum,...amountFor(pct),risk_mode:countertradeMultiplier(input)>1?'ADD_ON':'NORMAL'};
-  }).filter(row=>row.stake_usdt>=MIN_STAKE&&row.minimum_confidence<=row.maximum_confidence);
+  }).filter(row=>row.stake_usdt>=minimumForInput(input)&&row.minimum_confidence<=row.maximum_confidence);
   const permission=['UP','DOWN'].map(direction=>betPermission(input,direction)).find(p=>p.probe);
   const probe=permission?{...amountFor(permission.maxProbePct),risk_mode:'NORMAL'}:null;
-  return {normal,probe:probe?.stake_usdt>=MIN_STAKE?probe:null,...(input.account.balance>=MIN_STAKE&&input.policy.allow_all_in&&input.policy.max_stake_pct===100?{all_in:{...amountFor(100),risk_mode:'ALL_IN',requires:{...allInRequirements({strategy:input.policy.strategy,battleEmotion:input.policy.battle_emotion}),strongConsensus:true}}}:{})};
+  return {normal,probe:probe?.stake_usdt>=minimumForInput(input)?probe:null,...(input.account.balance>=minimumForInput(input)&&(capitalForInput(input).maxStake===undefined||capitalForInput(input).maxStake>=Math.floor(input.account.balance*100)/100)&&input.policy.allow_all_in&&input.policy.max_stake_pct===100?{all_in:{...amountFor(100),risk_mode:'ALL_IN',requires:{...allInRequirements({strategy:input.policy.strategy,battleEmotion:input.policy.battle_emotion}),strongConsensus:true}}}:{})};
 }
 
 function decisionFacts(input) {
@@ -223,6 +248,7 @@ function decisionPrompt(input = {}) {
     timeframe: input.market?.timeframe,
     strategy: input.policy?.strategy,
     decision_variance: input.policy?.decision_variance,
+    card_emotion: input.policy?.card_emotion,
     action_urge: input.policy?.action_urge,
     personal_action_urge: input.policy?.personal_action_urge,
     battle_action_urge: input.policy?.battle_action_urge,
@@ -235,16 +261,18 @@ function decisionPrompt(input = {}) {
     max_stake_pct: input.policy?.max_stake_pct,
     allow_all_in: input.policy?.allow_all_in,
     capital_recovery: capitalForInput(input).recoveryActive,
+    capital_version:input.policy?.capital_version,
     indicatorFields: Object.keys(input.indicators || {}),
   });
   const target = '\nPredict settlement relative to the ORIGINAL round opening price, not merely the next price move. market.round_context, when present, contains opening/current price, distance and closed-candle noise; spot-proxy prices are NOT the official oracle. A small rebound can still settle DOWN, and a pullback can still settle UP. Never invent an unavailable opening price. The shared local direction check aligns technical strategy signals to this target; fixed-side characters and frozen oracle contracts remain unchanged.';
   const signal = input.market?.round_context ? strategySignal(input) : null;
   const correction = signal?.directionCorrection ? `\nLocal settlement-target correction: ${JSON.stringify(signal.directionCorrection)}. Any BET must use the corrected direction; keep the same stake ladder, confidence requirements and positive-edge gate. Do not increase confidence merely to make the corrected side affordable.` : '';
-  const advice = input.policy?.review_mode === 'model' ? `\nThis is an independent model review, not proof of an entry signal. Read the market and choose BET or SKIP. Local execution permissions for this exact input: ${JSON.stringify(Object.fromEntries(['UP','DOWN'].map(direction=>[direction,betPermission(input,direction)])))}. A probe uses the supplied maxProbePct, which follows this personality’s tilt curve rather than a shared fixed percentage; the minimum is ${MIN_STAKE} USDT, including probes. Use only the supplied maxProbePct, while obeying configured and personality hard caps. If no legal amount reaches the minimum, SKIP. Never use ADD_ON or ALL_IN for a probe. Explain why you choose to act or wait. Do not increase confidence merely to pass the edge gate.` : '';
-  const capitalNote=`\nCapital sizing: ${JSON.stringify(capitalForInput(input))}. RECOVERY_ALL_IN is the shared exception to normal, probe and personality amount caps: any permitted BET must use the all_in choice until recovery ends. It does not override direction, freshness, minimum confidence, positive edge. Recovery-only paper bets may use the full sub-5 USDT balance down to 0.01 USDT; ordinary bets retain the 5 USDT minimum. PROFIT_PROTECTION reduces the usual percentage for cautious strategies; the exact stake choices already include that reduction.`;
+  const advice = input.policy?.review_mode === 'model' ? `\nThis is an independent model review, not proof of an entry signal. Read the market and choose BET or SKIP. Local execution permissions for this exact input: ${JSON.stringify(Object.fromEntries(['UP','DOWN'].map(direction=>[direction,betPermission(input,direction)])))}. A probe uses the supplied maxProbePct, which follows this personality’s tilt curve rather than a shared fixed percentage; the minimum is ${minimumForInput(input)} USDT, including probes. Use only the supplied maxProbePct, while obeying configured and personality hard caps. If no legal amount reaches the minimum, SKIP. Never use ADD_ON or ALL_IN for a probe. Explain why you choose to act or wait. Do not increase confidence merely to pass the edge gate.` : '';
+  const traitNote=input.policy.trait_effects?`\nCT-1 active rules: ${JSON.stringify(input.policy.trait_effects)}. These effects are already applied to effective action urge and the supplied legal stake choices; do not apply them a second time. A pause requires SKIP. Traits never add confidence, bypass confirmation, retain an invalid signal, change direction or relax all-in conditions.`:'';
+  const capitalNote=input.policy.capital_version==='SC-2'?`\nSC-2 strict limits: ${JSON.stringify(capitalForInput(input))}. Minimum 0.10 USDT; round down to cents. No recovery exception, no rounding up to reach the minimum. Submitted stakes must be a supplied legal personality tier and fit total pending exposure. If stopped or no legal tier fits, SKIP.`:`\nCapital sizing: ${JSON.stringify(capitalForInput(input))}. RECOVERY_ALL_IN is the shared exception to normal, probe and personality amount caps: any permitted BET must use the all_in choice until recovery ends. It does not override direction, freshness, minimum confidence, positive edge. Recovery-only paper bets may use the full sub-5 USDT balance down to 0.01 USDT; ordinary bets retain the 5 USDT minimum. PROFIT_PROTECTION reduces the usual percentage for cautious strategies; the exact stake choices already include that reduction.`;
   const amounts=`\nExact stake choices for the current balance ${input.account.balance} USDT: ${JSON.stringify(decisionStakeChoices(input))}. After choosing an honest confidence, copy BOTH stake_usdt and stake_pct from the eligible normal confidence band, the probe row when execution permissions require a probe, or the all_in row when ALL_IN is enabled and every supplied ALL_IN condition is met. If no eligible amount exists, SKIP. Never assume 10 USDT means 10 percent. Money has at most two decimal places; percentages must describe the actual rounded amount. ALL_IN still needs every stated condition.`;
   const facts=`\nProgram-verified decision facts: ${JSON.stringify(decisionFacts(input))}. These facts are authoritative. A permitted side is an option, never an obligation. Confidence must be strictly ABOVE that side's break_even_confidence_pct as well as at least minimum_confidence. For example, confidence 62 and odds 1.0417 means negative edge, not a thin positive edge. Do not raise confidence to qualify.\nFor BET return skip_reason_code=null. For SKIP return exactly one of: STRATEGY_BLOCKED only if BOTH directions are forbidden; NO_ELIGIBLE_PEERS only for countertraders with eligible_count=0; ORACLE_WAIT only if input.divination.verdict=WAIT; otherwise MODEL_UNCERTAIN for your discretionary judgement (including insufficient confidence or edge). Never call an eligible target ineligible. Free-text reason is model commentary; the program checks the reason code against these facts.`;
-  const extra = target + correction + advice + facts + amounts + capitalNote + (input.market?.entry_mode === 'signal' ? '\nThis is a mid-round review. Use seconds_to_close for the original round; a new full round does not start now.' : '');
+  const extra = traitNote + target + correction + advice + facts + amounts + capitalNote + (input.market?.entry_mode === 'signal' ? '\nThis is a mid-round review. Use seconds_to_close for the original round; a new full round does not start now.' : '');
   return prompt.replace('Return exactly one JSON object', `${extra}\nReturn exactly one JSON object`);
 }
 
@@ -295,11 +323,13 @@ function coreSnapshot(input) {
     spread:i.spread_microprice,
     longReturns:i.returns_15_60,
     marketOdds:i.market_odds,
+    donchian:i.donchian_20,
+    candles:i.raw_candles,
   };
 }
 
 function emotionForInput(input) {
-  return emotionAdjustment({strategy:input.policy.strategy,actionUrge:input.policy.action_urge,emotionSensitivity:input.policy.emotion_sensitivity,battleEmotion:input.policy.battle_emotion,winStreak:input.account.win_streak,lossStreak:input.account.loss_streak});
+  return emotionAdjustment({strategy:input.policy.strategy,actionUrge:input.policy.action_urge,emotionSensitivity:input.policy.emotion_sensitivity,cardEmotion:input.policy.card_emotion,battleEmotion:input.policy.battle_emotion,winStreak:input.account.win_streak,lossStreak:input.account.loss_streak});
 }
 
 function emotionFactor(emotion) {
@@ -317,31 +347,33 @@ function createMockDecisionProvider() {
     describe: () => ({ mode: 'mock', provider: 'Local deterministic model', model: 'offline-v2', configured: true, simulated: true }),
     async decide(input) {
       assertDecisionInputs(input);
+      if(capitalForInput(input).stopped)return skip(input.market.round_id,'已达到资金停止线');
       const signal = strategySignal(input) || signalScore(input);
       const oracle = signal.divination;
       const oracleResult = verdict => oracle ? { divination:{seed:oracle.seed,reading:formatDivination(oracle),verdict}, warnings:['ENTERTAINMENT_ONLY'] } : {};
+      if(input.policy.trait_effects?.paused)return {...skip(input.market.round_id,'CARD_TRAIT_COOLDOWN'),...oracleResult('WAIT')};
       const { score } = signal,emotion=emotionForInput(input),factors=[...signal.factors,emotionFactor(emotion)];
       const direction = score >= 0 ? 'UP' : 'DOWN';
       const odds = direction === 'UP' ? input.market.up_odds : input.market.down_odds;
-      const baseConfidence = confidenceForScore(score,input.policy.decision_variance,input.policy.strategy);
+      const baseConfidence = confidenceForScore(score,input.policy.card_emotion?50:input.policy.decision_variance,input.policy.strategy);
       const nudge = personalityNudge({strategy:input.policy.strategy,agentId:input.policy.agent_id,roundId:input.market.round_id,variance:input.policy.decision_variance,confidence:baseConfidence,minimumConfidence:emotion.minimumConfidence});
-      const confidence = Math.max(50,Math.min(97,baseConfidence+nudge));
+      const confidence = Math.max(50,Math.min(97,baseConfidence+(input.policy.card_emotion?0:nudge)));
       factors.push({name:'personality_nudge',value:nudge.toFixed(3),impact:'NEUTRAL'});
       const edge = confidence / 100 * odds - 1;
-      if (Math.abs(score) < entryThreshold(input) || confidence < emotion.minimumConfidence || edge <= 0) {
+      if (Math.abs(score) < entryThreshold(input) || confidence < emotion.minimumConfidence || (input.policy.card_emotion && nudge<0 && confidence<emotion.minimumConfidence-nudge) || edge <= 0) {
         return { ...skip(input.market.round_id, oracle ? `${formatDivination(oracle)}；本地模拟，本轮观望` : '没有通过本地验证的正期望'), confidence: Math.round(confidence), factors, ...oracleResult('WAIT') };
       }
-      let stakePct = normalStakePercent({countertradeMultiplier:countertradeMultiplier(input),balance:input.account.balance,initialBalance:input.account.initial_balance,openStake:input.account.open_stake||0,recoveryActive:input.account.capital_recovery,strategy:input.policy.strategy,baseStakePct:input.policy.base_stake_pct,maxStakePct:input.policy.max_stake_pct,confidence,edge,winStreak:input.account.win_streak,lossStreak:input.account.loss_streak,emotionSensitivity:input.policy.emotion_sensitivity,battleEmotion:input.policy.battle_emotion});
+      let stakePct = normalForInput(input,confidence,{countertradeMultiplier:countertradeMultiplier(input),balance:input.account.balance,initialBalance:input.account.initial_balance,openStake:input.account.open_stake||0,recoveryActive:input.account.capital_recovery,strategy:input.policy.strategy,baseStakePct:input.policy.base_stake_pct,maxStakePct:input.policy.max_stake_pct,confidence,edge,winStreak:input.account.win_streak,lossStreak:input.account.loss_streak,emotionSensitivity:input.policy.emotion_sensitivity,cardEmotion:input.policy.card_emotion,battleEmotion:input.policy.battle_emotion});
       let riskMode = input.policy.strategy!=='liangXi'&&(countertradeMultiplier(input)>1||emotion.streak&&emotion.stakeMultiplier>1.001)?'ADD_ON':'NORMAL';
       const permission=betPermission(input,direction);
       const allInRules=allInRequirements({strategy:input.policy.strategy,battleEmotion:input.policy.battle_emotion});
-      const allIn = !permission.probe && input.policy.allow_all_in && input.policy.max_stake_pct === 100 && confidence >= allInRules.confidence && edge >= allInRules.minimumEdge && strongCoreConsensus(coreSnapshot(input),direction,input.policy.strategy) &&
+      const allIn = (capitalForInput(input).maxStake===undefined||capitalForInput(input).maxStake>=Math.floor(input.account.balance*100)/100) && !permission.probe && input.policy.allow_all_in && input.policy.max_stake_pct === 100 && confidence >= allInRules.confidence && edge >= allInRules.minimumEdge && strongCoreConsensus(coreSnapshot(input),direction,input.policy.strategy) &&
         input.account.loss_streak >= allInRules.requiredLossStreak;
       if (allIn || capitalForInput(input).recoveryActive) { stakePct = 100; riskMode = 'ALL_IN'; }
-      if (permission.probe) { stakePct=Math.min(Math.max(stakePct,MIN_STAKE*100/input.account.balance),permission.maxProbePct); riskMode='NORMAL'; }
+      if (permission.probe) { stakePct=input.policy.capital_version==='SC-2'?permission.maxProbePct:Math.min(Math.max(stakePct,MIN_STAKE*100/input.account.balance),permission.maxProbePct); riskMode='NORMAL'; }
       stakePct = Math.min(stakePct, capitalForInput(input).recoveryActive?100:input.policy.max_stake_pct);
       const stake = Math.floor(input.account.balance * stakePct + 1e-8) / 100;
-      if (stake < (capitalForInput(input).recoveryActive?.01:MIN_STAKE)) return {...skip(input.market.round_id, '金额低于本地最小值'), ...oracleResult('WAIT')};
+      if (stake < minimumForInput(input)) return {...skip(input.market.round_id, '金额低于本地最小值'), ...oracleResult('WAIT')};
       return {
         round_id: input.market.round_id,
         action: 'BET',
@@ -378,7 +410,7 @@ function strategySignal(input) {
 
 function rawStrategySignal(input) {
   const profile = PROFILE_RULES[input.policy.strategy];
-  const character=evaluateCharacter(input.policy.strategy,coreSnapshot(input),input.policy.action_urge,{asset:input.market.asset,roundId:input.market.round_id,agentId:input.policy.agent_id,peers:input.peers});
+  const character=evaluateCharacter(input.policy.strategy,coreSnapshot(input),input.policy.action_urge,{asset:input.market.asset,roundId:input.market.round_id,agentId:input.policy.agent_id,peers:input.peers,styleId:input.policy.card_snapshot?.styleId});
   if(character)return character;
   const oracle=evaluateDivination(input.policy.strategy,coreSnapshot(input),{roundId:input.market.round_id,asset:input.market.asset,frozenReading:input.divination,actionUrge:input.policy.action_urge});
   if(oracle)return oracle;
@@ -470,18 +502,20 @@ function createOffDecisionProvider(reason = 'AI_DECISION_DISABLED') {
 function entryThreshold(input) { return 2.4-Math.max(0,Math.min(100,Number(input.policy.action_urge)||0))*.014; }
 
 function betPermission(input, direction) {
+  if(input.policy.trait_effects?.paused)return {allowed:false,reason:'CARD_TRAIT_COOLDOWN'};
   const signal=strategySignal(input), sign=direction==='UP'?1:-1;
   const matched=signal?.score && Math.sign(signal.score)===sign;
   const i=input.indicators;
   const unsafe=i.spread_microprice?.basisPoints>8 || i.atr_14?.percent>1.2 || i.realized_volatility_20?.perMinutePct>.8;
-  const flexible=input.policy.review_mode==='model' && ['aggressive','smart','priceAction'].includes(input.policy.strategy);
+  const fullConfirmation=input.policy.traits_version==='CT-1'&&input.policy.card_traits?.includes('confirm');
+  const flexible=!fullConfirmation && input.policy.review_mode==='model' && ['aggressive','smart','priceAction'].includes(input.policy.strategy);
   const weak=!matched || Math.abs(signal.score)<entryThreshold(input);
   const strongConflict=!matched && Math.abs(signal?.score||0)>=5;
   const patterns=signal?.factors?.filter(f=>['engulfing','rejection_wick','range_break','three_bar_structure','candle_run','body_drive'].includes(f.name))||[];
   const patternConflict=patterns.some(f=>f.impact==='UP')&&patterns.some(f=>f.impact==='DOWN');
   const allowed=!unsafe && (matched && !weak || flexible && input.policy.action_urge>=70 && !strongConflict && !patternConflict && !signal?.directionCorrection && !['missing','risk-off'].includes(signal?.regime));
   const probe=!capitalForInput(input).recoveryActive&&Boolean(allowed && (weak || signal?.probe || Math.abs(signal?.score||0)<3));
-  return {allowed:Boolean(allowed),probe,maxProbePct:probeStakePercent({strategy:input.policy.strategy,baseStakePct:input.policy.base_stake_pct,maxStakePct:input.policy.max_stake_pct,balance:input.account.balance,initialBalance:input.account.initial_balance,openStake:input.account.open_stake||0,recoveryActive:input.account.capital_recovery,battleEmotion:input.policy.battle_emotion})};
+  return {allowed:Boolean(allowed),probe,maxProbePct:input.policy.capital_version==='SC-2'?cardCapital.probePct(input):probeStakePercent({strategy:input.policy.strategy,baseStakePct:input.policy.base_stake_pct,maxStakePct:input.policy.max_stake_pct,balance:input.account.balance,initialBalance:input.account.initial_balance,openStake:input.account.open_stake||0,recoveryActive:input.account.capital_recovery,battleEmotion:input.policy.battle_emotion})};
 }
 
 function entryWaitReason(input) {
@@ -518,7 +552,7 @@ function entrySignal(input, candleCloseTime) {
   const peers = ['contrarian','showoff'].includes(input.policy.strategy)
     ? (input.peers?.agents || []).filter(a => a.order).map(a => a.order.id).sort() : [];
   return { direction, key: JSON.stringify([direction, signal.regime, Math.floor(Math.abs(signal.score)),
-    candleCloseTime ?? null, peers]), score: signal.score };
+    candleCloseTime ?? null, peers, input.policy.controls_revision??0]), score: signal.score };
 }
 
 function createDeepSeekDecisionProvider({ apiKey, baseUrl = 'https://api.deepseek.com', model = 'deepseek-chat', fetchImpl = require('./ai-transport').aiFetch } = {}) {
@@ -529,16 +563,18 @@ function createDeepSeekDecisionProvider({ apiKey, baseUrl = 'https://api.deepsee
     async decide(input, { deadlineMs = Infinity, now = Date.now, onRequest, isCancelled } = {}) {
       assertDecisionInputs(input);
       if (!secret) throw decisionError('AI_NOT_CONFIGURED', 503);
-      const timeoutMs = Math.floor(Math.min(8000, deadlineMs - now() - 250));
+      const timeoutMs = Math.floor(Math.min(input.market.entry_mode === 'precompute' ? 20000 : 8000, deadlineMs - now() - 250));
       if (timeoutMs <= 0) throw decisionError('AI_DEADLINE_EXPIRED');
       if(isCancelled?.())throw decisionError('AI_CONFIGURATION_CHANGED');
-      const body={model,temperature:Math.min(0.65,0.15+input.policy.decision_variance/200),max_tokens:1500,response_format:{type:'json_object'},
+      const body={model,...deepseekNonThinking(model),max_tokens:1500,response_format:{type:'json_object'},
         messages:[{role:'system',content:decisionPrompt(input)},{role:'user',content:JSON.stringify(input)}]};
-      onRequest?.({provider:'deepseek',body:structuredClone(body),responseContract:'strategy-v2'});
+      const sampling=samplingFor({provider:'deepseek',model,variance:input.policy.decision_variance,thinkingDisabled:body.thinking?.type==='disabled'});
+      Object.assign(body,sampling.parameters);
+      onRequest?.({provider:'deepseek',body:structuredClone(body),sampling:sampling.audit,responseContract:'strategy-v2'});
       let response;
       try {
         response = await fetchImpl(endpoint, {
-          method: 'POST',
+          method: 'POST', redirect: 'error',
           headers: { 'content-type': 'application/json', authorization: `Bearer ${secret}` },
           body: JSON.stringify(body),
           signal: AbortSignal.timeout(timeoutMs),
@@ -554,7 +590,7 @@ function createDeepSeekDecisionProvider({ apiKey, baseUrl = 'https://api.deepsee
       let raw;
       try { raw=JSON.parse(content); } catch { throw decisionError('AI_RESPONSE_INVALID'); }
       if(!raw||typeof raw!=='object'||Array.isArray(raw))throw decisionError('AI_RESPONSE_INVALID');
-      Object.defineProperty(raw,DECISION_META,{value:{engine:{mode:'deepseek',provider:'DeepSeek',model,configured:true,simulated:false},responseContract:'strategy-v2'}});
+      Object.defineProperty(raw,DECISION_META,{value:{engine:{mode:'deepseek',provider:'DeepSeek',model,configured:true,simulated:false},sampling:sampling.audit,responseContract:'strategy-v2'}});
       return raw;
     },
   };
@@ -626,6 +662,7 @@ function validateDecision(raw, { input, indicators, policy, now = Date.now() }) 
     }
     return { ...base, direction: null, stake: 0, stakePct: 0, expectedEdge: null };
   }
+  if(input.policy.trait_effects?.paused)throw decisionError('CARD_TRAIT_COOLDOWN');
   if (!['UP', 'DOWN'].includes(raw.direction)) throw decisionError('AI_DIRECTION_INVALID');
   assertDecisionInputs(input);
   const required = PROFILE_RULES[policy.strategy].required;
@@ -639,7 +676,8 @@ function validateDecision(raw, { input, indicators, policy, now = Date.now() }) 
     throw decisionError('AI_STAKE_INVALID');
   }
   const capital=capitalForInput(input);
-  if (stake < (capital.recoveryActive?.01:MIN_STAKE)) throw decisionError('AI_STAKE_BELOW_MINIMUM');
+  if(input.policy.capital_version==='SC-2')cardCapital.assertStake(input,raw,confidence);
+  if (stake < minimumForInput(input)) throw decisionError('AI_STAKE_BELOW_MINIMUM');
   const cap = Math.floor(input.account.balance * (capital.recoveryActive?100:policy.maxStakePct)+1e-8) / 100;
   if(capital.recoveryActive&&(raw.risk_mode!=='ALL_IN'||Math.abs(stake-Math.floor(input.account.balance*100+1e-8)/100)>1e-8))throw decisionError('AI_ALL_IN_REJECTED');
   if (stake > input.account.balance || stake > cap || Math.abs(stakePct - stake / input.account.balance * 100) > 0.02) throw decisionError('AI_STAKE_OVER_CAP');
@@ -656,7 +694,7 @@ function validateDecision(raw, { input, indicators, policy, now = Date.now() }) 
   const odds = raw.direction === 'UP' ? input.market.up_odds : input.market.down_odds;
   const expectedEdge = confidence / 100 * odds - 1;
   if (!Number.isFinite(expectedEdge) || expectedEdge <= 0) throw decisionError('AI_EDGE_NOT_POSITIVE');
-  const emotionalNormalCap=permission.probe?permission.maxProbePct:normalStakePercent({countertradeMultiplier:countertradeMultiplier(input),balance:input.account.balance,initialBalance:input.account.initial_balance,openStake:input.account.open_stake||0,recoveryActive:input.account.capital_recovery,strategy:policy.strategy,baseStakePct:policy.baseStakePct,maxStakePct:policy.maxStakePct,confidence,edge:expectedEdge,winStreak:input.account.win_streak,lossStreak:input.account.loss_streak,emotionSensitivity:policy.emotionSensitivity,battleEmotion:input.policy.battle_emotion});
+  const emotionalNormalCap=permission.probe?permission.maxProbePct:normalForInput(input,confidence,{countertradeMultiplier:countertradeMultiplier(input),balance:input.account.balance,initialBalance:input.account.initial_balance,openStake:input.account.open_stake||0,recoveryActive:input.account.capital_recovery,strategy:policy.strategy,baseStakePct:policy.baseStakePct,maxStakePct:policy.maxStakePct,confidence,edge:expectedEdge,winStreak:input.account.win_streak,lossStreak:input.account.loss_streak,emotionSensitivity:policy.emotionSensitivity,cardEmotion:input.policy.card_emotion,battleEmotion:input.policy.battle_emotion});
   if(raw.risk_mode!=='ALL_IN'&&stakePct>emotionalNormalCap+0.02) throw decisionError('AI_STAKE_OVER_CAP');
   const allInRules=allInRequirements({strategy:policy.strategy,battleEmotion:input.policy.battle_emotion});
   const effectivelyAllIn = raw.risk_mode === 'ALL_IN' || stake >= input.account.balance * 0.95;
@@ -672,8 +710,10 @@ function validateDecision(raw, { input, indicators, policy, now = Date.now() }) 
 
 function decisionAudit({ provider, input, plan, indicators, raw }) {
   return {
+    ...(input.policy.trait_effects?{traitEffects:structuredClone(input.policy.trait_effects)}:{}),
     engine: raw?.[DECISION_META]?.engine || provider.describeFor?.(input) || provider.describe(),
     ...(raw?.[DECISION_META]?.usage ? { usage: raw[DECISION_META].usage } : {}),
+    ...(raw?.[DECISION_META]?.sampling ? { sampling: raw[DECISION_META].sampling } : {}),
     inputHash: crypto.createHash('sha256').update(JSON.stringify(input)).digest('hex'),
     roundId: input.market.round_id,
     dataTimestamp: Math.min(input.market.data_timestamp, indicators.dataTimestamp),

@@ -22,7 +22,7 @@ test('battle HTTP API creates isolated accounts and controls only the selected b
     assert.equal((await (await request(origin,'/api/simulation')).json()).config.realtimeEntry,false);
     assert.equal((await request(origin,'/api/simulation/realtime-entry',{method:'POST',body:JSON.stringify({battleId:created.id,enabled:'true'})})).status,400);
     const data = await (await request(origin, '/api/simulation/battles')).json();
-    assert.equal(data.battles.length, 2); assert.equal(data.leaderboard.length, 6);
+    assert.equal(data.battles.length, 2); assert.equal(data.leaderboard.length, 3); assert.equal(data.battles[0].placeholder, true);
     assert.equal(data.view, 'summary');
     assert.ok(data.battles.every(battle => battle.view === 'summary' && battle.agents.every(agent => !Object.hasOwn(agent, 'orders'))));
     const live = await (await request(origin, `/api/simulation?battleId=${created.id}&view=live`)).json();
@@ -400,4 +400,23 @@ test('fails closed when the order exceeds the cap or the wallet is locked', asyn
     assert.equal((await locked.json()).code, 'WALLET_TRANSACTION_LOCKED');
     assert.equal(quoteCalls, 0);
   });
+});
+
+
+test('wallet balance failures and missing valuations are not presented as zero assets', async () => {
+  for (const mode of ['failed', 'missing', 'empty']) {
+    await withServer(async args => {
+      const cmd = command(args);
+      if (cmd === 'wallet status') return {data:{status:'CONNECTED'}};
+      if (cmd === 'wallet balance') {
+        if (mode === 'failed') throw Error('balance unavailable');
+        return {data:mode === 'empty' ? [] : [{symbol:'BTC',balance:'1'}]};
+      }
+      return {data:{}};
+    }, async origin => {
+      const result = await (await request(origin, '/api/wallet')).json();
+      assert.equal(result.accountValue, mode === 'empty' ? 0 : null);
+      assert.equal(result.balancesAvailable, mode !== 'failed');
+    });
+  }
 });

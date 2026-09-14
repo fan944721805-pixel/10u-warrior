@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="widget_surface">#E7E2EB</color>
+    <color name="widget_panel">#DED5E5</color>
+    <color name="widget_state">#D9CFE2</color>
+    <color name="widget_muted">#705C80</color>
+    <color name="widget_divider">#CFC3DA</color>
+    <color name="widget_scroll_thumb">#7C668E</color>
+    <color name="widget_scroll_track">#CEC3D7</color>
+    <color name="widget_positive">#1F745E</color>
+    <color name="widget_negative">#A2485A</color>
+</resources>

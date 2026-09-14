@@ -76,7 +76,7 @@ test('external model decisions are globally limited to four concurrent requests'
 
 test('UI exposes the seventeen-Agent roster, eight battle seats, collision meter and responsive grids',()=>{
   const read=file=>fs.readFileSync(path.join(__dirname,'../public',file),'utf8');
-  const setup=read('agent-setup.js'),paper=read('paper.js'),offline=read('offline-simulation.js'),index=read('index.html'),layout=read('ui-v2.css'),arena=read('orb-arena.js');
+  const setup=read('agent-setup.js'),paper=read('paper.js'),offline=read('offline-simulation.js'),index=fs.readFileSync(path.join(__dirname,'fixtures/legacy-ui/index.html'),'utf8'),layout=read('ui-v2.css'),arena=read('orb-arena.js');
   assert.match(setup,/maxCards=17,maxSelected=8/);assert.match(setup,/每局最多选择 8 位 AI/);assert.match(setup,/当前最多添加 17 位 Agent/);
   assert.match(paper,/agents\.length > 8/);assert.match(offline,/agents\.length > 8/);assert.match(offline,/raw\.slice\(0, 8\)/);assert.match(index,/每局最多 8 个/);assert.match(index,/id="collision-rate"/);
   assert.match(layout,/grid-template-columns:\s*repeat\(4/);assert.match(layout,/grid-template-columns:\s*repeat\(2/);

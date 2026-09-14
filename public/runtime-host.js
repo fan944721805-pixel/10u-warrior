@@ -29,7 +29,7 @@
     } catch { bridge.widgetUnavailable(); }
     finally { widgetBusy = false; }
   }
-  const methods = new Set(['list','snapshot','report','create','setEnabled','topUp','setEmotion','setActionUrge',
+  const methods = new Set(['list','snapshot','report','create','setEnabled','topUp','setGlobalControls','setEmotion','setActionUrge',
     'setRealtimeEntry','end','retryConnection','reset','remove','getStrategies','strategies','setStrategies',
     'indicators','prices','valuation','executions','checkNetwork']);
   function emit(type, data) { bridge.event(type, JSON.stringify(data)); }
@@ -58,7 +58,7 @@
       }
       for (const symbol of symbols) watch(symbol);
       for (const [symbol, stream] of streams) if (!symbols.has(symbol)) { stream.stop(); streams.delete(symbol); quotes.delete(symbol); }
-      bridge.demand(active, open);
+      bridge.demand(active, open, runtime.api.walletActivity());
     } catch { bridge.failed('MOBILE_SERVICE_FAILED'); }
     finally { syncing = false; if (syncAgain) { syncAgain = false; void sync(); } }
   }
@@ -100,6 +100,7 @@
     runtime = WarriorMobileRuntime.create();
     runtime.api.subscribe(event => { emit('simulation', event); void sync(); void updateWidget(); });
     window.addEventListener('warrior-mobile-network', event => emit('network', event.detail));
+    window.addEventListener('warrior-mobile-wallet', () => void sync());
     void sync().then(() => bridge.ready());
     setInterval(() => void updateWidget(), 25000);
   } catch (error) { bridge.failed(error.code || 'MOBILE_STORAGE_UNAVAILABLE'); }

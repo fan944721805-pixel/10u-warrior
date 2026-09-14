@@ -1,3 +1,4 @@
+// Historical UI contracts. Current acceptance is scripts/verify-card-lab.cjs.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -18,13 +19,13 @@ test('display identity uses strategy, never a saved personal name; historical po
 
 test('Agent name input and its validation handlers are removed', () => {
   for(const file of ['index.html','agent-setup.js','ai-settings.js']) {
-    const source = fs.readFileSync(require.resolve('../public/'+file),'utf8');
+    const source = fs.readFileSync(require.resolve(file==='index.html'?'./fixtures/legacy-ui/index.html':'../public/'+file),'utf8');
     assert.doesNotMatch(source, /id="agent-name"|querySelector\('#agent-name'\)/);
   }
 });
 
 test('streak emotion has one clear control and follows the Agent configuration path', () => {
-  const index = fs.readFileSync(require.resolve('../public/index.html'),'utf8');
+  const index = fs.readFileSync(require.resolve('./fixtures/legacy-ui/index.html'),'utf8');
   const setup = fs.readFileSync(require.resolve('../public/agent-setup.js'),'utf8');
   const settings = fs.readFileSync(require.resolve('../public/ai-settings.js'),'utf8');
   const app = fs.readFileSync(require.resolve('../public/app.js'),'utf8');
@@ -40,7 +41,7 @@ test('streak emotion has one clear control and follows the Agent configuration p
 });
 
 test('battle settings have one arena tilt and one arena action-urge slider wired to the selected battle', () => {
-  const index=fs.readFileSync(require.resolve('../public/index.html'),'utf8');
+  const index=fs.readFileSync(require.resolve('./fixtures/legacy-ui/index.html'),'utf8');
   const paper=fs.readFileSync(require.resolve('../public/paper.js'),'utf8');
   const api=fs.readFileSync(require.resolve('../public/simulation-api.js'),'utf8');
   assert.equal((index.match(/id="battle-emotion"/g)||[]).length,1);

@@ -1,7 +1,6 @@
 (() => {
-  const params = new URLSearchParams(location.search);
   const nativeRuntime = Boolean(window.Capacitor?.isNativePlatform?.());
-  if (nativeRuntime && params.get('offline') !== '1') {
+  if (nativeRuntime) {
     window.Warrior = window.Warrior || {};
     try {
       const runtime = window.WarriorNativeService.create(window.Capacitor.Plugins?.NativeRuntime);
@@ -20,10 +19,6 @@
     document.documentElement.dataset.runtime = 'native';
     return;
   }
-  const useOfflineRuntime = location.protocol === 'file:' || params.get('offline') === '1';
-  const offline = useOfflineRuntime
-    ? window.WarriorOfflineSimulation?.createOfflineSimulation({ storage: window.localStorage })
-    : null;
   const clientId = (() => {
     try {
       const key = 'warrior-client-session';
@@ -36,6 +31,7 @@
   })();
 
   async function request(url, options = {}) {
+    if (location.protocol === 'file:') throw Object.assign(new Error('RUNTIME_UNAVAILABLE'), {code:'RUNTIME_UNAVAILABLE'});
     const { timeoutMs = 5000, ...fetchOptions } = options;
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
     const signal = options.signal && typeof AbortSignal.any === 'function'
@@ -73,28 +69,7 @@
       throw Object.assign(new Error(extended?'新增指标与策略需要重启本机服务后使用。':'新玩法需要重启本机服务后使用。'), {code:'STRATEGY_SERVICE_UPGRADE_REQUIRED'});
     }
   }
-  const simulationApi = offline ? {
-    mode: 'offline',
-    list: async () => ({ battles: offline.list(), leaderboard: offline.leaderboard() }),
-    snapshot: async battleId => offline.snapshot(battleId || 'default'),
-    report: async battleId => offline.snapshot(battleId || 'default'),
-    subscribe: () => () => {},
-    create: async (name, config, requestId) => offline.create(name, config, requestId),
-    storageStatus: () => offline.storageStatus(),
-    recoverStorage: async action => offline.recoverStorage(action),
-    setEnabled: async (battleId, enabled) => offline.setEnabled(battleId, enabled),
-    topUp: async (battleId,agentId,amount,requestId)=>offline.topUp(battleId,agentId,amount,requestId),
-    setEmotion: async (battleId, emotionLevel) => offline.setEmotion(battleId, emotionLevel),
-    setActionUrge: async (battleId, actionUrgeLevel) => offline.setActionUrge(battleId, actionUrgeLevel),
-    end: async (battleId, reason) => offline.end(battleId, reason),
-    reset: async () => offline.reset(),
-    remove: async battleId => offline.remove(battleId),
-    release: battleId => offline.setEnabled(battleId, false),
-    getStrategies: async () => offline.getStrategies(),
-    strategies: async () => offline.getStrategies(),
-    setStrategies: async agents => offline.setStrategies(agents),
-    indicators: async symbol => offline.indicators(symbol),
-  } : {
+  const simulationApi = {
     mode: 'server',
     retryConnection: battleId => request('/api/simulation/retry', { method: 'POST', body: JSON.stringify({ battleId }) }),
     topUp: (battleId,agentId,amount,requestId)=>request('/api/simulation/top-up',{method:'POST',body:JSON.stringify({mode:'paper',battleId,agentId,amount,requestId})}),
@@ -121,6 +96,7 @@
       body: JSON.stringify({ battleId, enabled, clientId }),
       timeoutMs: 70000,
     }),
+    setGlobalControls: (battleId,controls,revision) => request('/api/simulation/global-controls',{method:'POST',body:JSON.stringify({battleId,controls,revision})}),
     setEmotion: (battleId, emotionLevel) => request('/api/simulation/emotion', {
       method: 'POST',
       body: JSON.stringify({ battleId, emotionLevel, clientId }),
@@ -149,9 +125,8 @@
 
   window.Warrior = window.Warrior || {};
   simulationApi.clientId = clientId;
-  // Only the installed Android app continues local simulation while hidden.
-  simulationApi.keepInBackground = Boolean(offline && nativeRuntime && window.Capacitor.getPlatform?.() === 'android');
-  if (!offline) {
+  simulationApi.keepInBackground = false;
+  {
     simulationApi.prices = symbol => request(`/api/market/prices?symbol=${encodeURIComponent(symbol)}`, { timeoutMs: 10000 });
     simulationApi.intent = (battleId, intentId) => request(`/api/simulation/intent?battleId=${encodeURIComponent(battleId)}&intentId=${encodeURIComponent(intentId)}`);
     simulationApi.executions = battleId => request(`/api/executions?battleId=${encodeURIComponent(battleId)}`);

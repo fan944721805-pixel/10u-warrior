@@ -52,6 +52,11 @@ function createPublicPracticeSource({ fetchImpl = fetch, now = Date.now } = {}) 
   }
   return {
     async marketFor(slot, symbol, duration) { return topic(slot, symbol, duration); },
+    async previewBook(market, direction) {
+      const checked=parse(market.marketTopicId);
+      return {tokenId:`${checked.marketTopicId}:${direction}`,timestamp:now(),source:PRACTICE,simulated:true,
+        asks:[{price:.5,size:1e12}],bids:[{price:.5,size:1e12}]};
+    },
     async detail(id) {
       const market = parse(id);
       if (now() < market.startDate) return market;
@@ -147,6 +152,7 @@ function createSimulationMarketSource({ official, walletStatus, run, chainId = '
     },
     detail: id => sourceFor(id).detail(id),
     book: (market, direction) => sourceFor(market.marketTopicId).book(market, direction),
+    previewBook: (market,direction) => isPractice(market.marketTopicId) ? practice.previewBook(market,direction) : official.book(market,direction),
     async quote(market, direction, amount, observedBook) {
       const tokenId = String(market.markets[0].outcomes.find(o => o.name === (direction === 'UP' ? 'Up' : 'Down')).tokenId);
       if (isPractice(market.marketTopicId)) {

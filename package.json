@@ -1,6 +1,6 @@
 {
   "name": "10u-warrior",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "license": "MIT",
   "engines": {
@@ -10,27 +10,29 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "precheck": "node --check public/native-service-client.js && node --check public/runtime-scheduler.js && node --check public/runtime-host.js && node --check public/android-background.js && node --check public/i18n-east-asian.js && node --check scripts/verify-locales.cjs && node --check technical-indicators.js && node --check public/strategy-catalog.js && node --check scripts/verify-indicator-ui.cjs && node --check scripts/verify-expanded-live.cjs && node --check public/ai-settings.js && node --check scripts/verify-ai-settings.cjs && node --check scripts/verify-strategy-cards.cjs && node --check public/market-values.js && node --check public/price-stream.js && node --check scripts/verify-price-stream.cjs && node --check scripts/price-socket-fixture.cjs",
-    "check": "node --check public/creation-request.js && node --check scripts/verify-simulation-repairs.cjs && node --check ai-transport.js && node --check ai-connections.js && node --check public/ai-routing.js && node --check public/agent-equity.js && node --check execution-bridge.js && node --check public/execution-panel.js && node --check scripts/verify-functional-chain.cjs && node --check server.js && node --check ai-decision.js && node --check market-indicators.js && node --check paper-trading.js && node --check prediction-sim.js && node --check simulation-battles.js && node --check public/app-core.js && node --check public/skin-registry.js && node --check public/offline-simulation.js && node --check public/simulation-api.js && node --check public/app.js && node --check public/agent-setup.js && node --check public/paper.js && node --check public/wallet.js && node --check public/orb-arena.js && node --check public/leaderboard.js && node --check public/ai-api.js && node --check public/character-mode.js && node --check public/mobile-layout.js && node --check public/i18n.js && node --check mobile/runtime.cjs && node --check mobile/http.cjs",
+    "check": "node scripts/check.cjs",
     "test": "node --test",
     "android:sync": "npm run mobile:build && node scripts/sync-android-icon.cjs && npx cap sync android",
     "android:open": "npx cap open android",
     "android:apk": "npm run check && npm test && node scripts/sync-android-icon.cjs && npx cap sync android && cd android && gradlew.bat assembleDebug",
     "mobile:build": "node scripts/build-mobile.cjs",
     "pretest": "npm run mobile:build",
-    "mobile:verify": "node scripts/verify-mobile-runtime.cjs",
-    "widget:verify": "node --test test/strategy-widget.test.js"
+    "mobile:verify": "npm run mobile:build && node scripts/verify-mobile-client.cjs",
+    "widget:verify": "node --test test/strategy-widget.test.js",
+    "verify:ui": "node scripts/verify-card-lab.cjs"
   },
   "dependencies": {
     "@binance/agentic-wallet": "1.10.0",
     "@capacitor/android": "8.5.2",
     "@capacitor/core": "8.5.2",
+    "@noble/curves": "1.2.0",
     "@noble/hashes": "1.8.0",
     "ethers": "6.17.0",
     "qrcode": "1.5.4"
   },
   "devDependencies": {
     "@capacitor/cli": "8.5.2",
-    "esbuild": "0.25.12"
+    "esbuild": "0.25.12",
+    "jsqr": "1.4.0"
   }
 }

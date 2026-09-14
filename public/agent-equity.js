@@ -40,7 +40,8 @@
   const numeric=(tag,text,cls)=>{const el=node(tag,text,cls);el.dataset.noTranslate='';return el;};
   const number=value=>value.toLocaleString(doc.documentElement.lang,{minimumFractionDigits:2,maximumFractionDigits:2});
   let active=null;
-  function render(section,simulation,agent,selected=null) {
+  function render(section,simulation,agent,selected=null,translate=value=>value,showFlat=false) {
+    const node=(tag,text,cls)=>{const el=doc.createElement(tag);if(text!==undefined)el.textContent=translate(text);if(cls)el.className=cls;return el;};
     const series=buildSeries(simulation,agent);
     section.replaceChildren();
     const heading=node('div',undefined,'equity-chart-heading');heading.append(node('strong','资金变化'),node('span','模拟资金'));
@@ -51,14 +52,14 @@
       const stat=node('div');stat.append(node('small',label),numeric('strong',`${value>0&&signed?'+':''}${number(value)} USDT`));stats.append(stat);
     }
     section.append(stats);
-    if(!series.hasChanges){section.append(node('p','还没有结算，资金暂未变化。','equity-chart-note'));return;}
+    if(!series.hasChanges){section.append(node('p','还没有结算，资金暂未变化。','equity-chart-note'));if(!showFlat)return;}
     const {points}=series,W=440,H=180,left=50,right=16,top=15,bottom=24;
     let min=points.reduce((v,p)=>Math.min(v,p.value),Infinity),max=points.reduce((v,p)=>Math.max(v,p.value),-Infinity);
     const pad=Math.max((max-min)*.15,Math.abs(max)*.02,.01);min-=pad;max+=pad;
     const duration=points.at(-1).at-points[0].at;
     const x=(p,i)=>left+(W-left-right)*(duration?(p.at-points[0].at)/duration:i/(points.length-1));
     const y=p=>top+(max-p.value)/(max-min)*(H-top-bottom);
-    const svg=svgNode('svg',{viewBox:`0 0 ${W} ${H}`,role:'img','aria-label':'资金变化',preserveAspectRatio:'xMidYMid meet'});
+    const svg=svgNode('svg',{viewBox:`0 0 ${W} ${H}`,role:'img','aria-label':translate('资金变化'),preserveAspectRatio:'xMidYMid meet'});
     for(const f of [0,.5,1]){
       const py=top+f*(H-top-bottom);
       svg.append(svgNode('line',{x1:left,x2:W-right,y1:py,y2:py,class:'equity-grid'}));
@@ -74,12 +75,12 @@
     section.append(svg);
     const readout=node('div',undefined,'equity-chart-readout');readout.setAttribute('aria-live','polite');
     const kind=node('span'),date=numeric('time',''),value=numeric('strong','');readout.append(kind,date,value);section.append(readout);
-    const slider=node('input');slider.type='range';slider.min='0';slider.max=String(points.length-1);slider.step='1';slider.setAttribute('aria-label','查看资金记录');slider.className='equity-chart-slider';section.append(slider);
+    const slider=node('input');slider.type='range';slider.min='0';slider.max=String(points.length-1);slider.step='1';slider.setAttribute('aria-label',translate('查看资金记录'));slider.className='equity-chart-slider';section.append(slider);
     function select(index){
       index=Math.max(0,Math.min(points.length-1,index));const p=points[index];slider.value=String(index);
       section.dataset.selectedIndex=String(index);
       guide.setAttribute('x1',x(p,index));guide.setAttribute('x2',x(p,index));dot.setAttribute('cx',x(p,index));dot.setAttribute('cy',y(p));
-      kind.textContent=({initial:'初始资金',settlement:'订单结算',capital:'补资',current:'当前'})[p.kind];
+      kind.textContent=translate(({initial:'初始资金',settlement:'订单结算',capital:'补资',current:'当前'})[p.kind]);
       date.textContent=new Intl.DateTimeFormat(doc.documentElement.lang,{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(p.at);
       date.dateTime=new Date(p.at).toISOString();value.textContent=`${number(p.value)} USDT${p.kind==='capital'?` (+${number(p.delta)})`:''}`;
       slider.setAttribute('aria-valuetext',`${date.textContent}, ${value.textContent}`);
@@ -92,9 +93,9 @@
     if(series.deposits){const legend=node('p',undefined,'equity-chart-note equity-chart-legend');legend.append(node('i'),node('span','补资'),numeric('span',`+${number(series.deposits)} USDT`));section.append(legend);}
   }
   const signature=(simulation,agent)=>JSON.stringify([simulation.endedAt,simulation.config.initialBalance,agent.equity,agent.cash,agent.reserved,agent.addedCapital,agent.topUps,agent.orders.map(o=>[o.id,o.status,o.amount,o.payout,o.settledAt,o.end,o.quote?.odds])]);
-  root.WarriorEquity={buildSeries,mount(simulation,agent,{watch=true}={}){
+  root.WarriorEquity={buildSeries,mount(simulation,agent,{watch=true,translate=value=>value,showFlat=false}={}){
     const section=node('section',undefined,'agent-equity-chart');section.dataset.agentId=agent.id;
-    active=watch?{section,battleId:simulation.id,agentId:agent.id,signature:signature(simulation,agent)}:null;render(section,simulation,agent);return section;
+    active=watch?{section,battleId:simulation.id,agentId:agent.id,signature:signature(simulation,agent),translate,showFlat}:null;render(section,simulation,agent,null,translate,showFlat);return section;
   }};
   function refresh(preserve=false){
     if(!active?.section.isConnected||!doc.querySelector('#detail-dialog')?.open)return;
@@ -103,8 +104,8 @@
     const next=signature(simulation,agent);
     if(!preserve&&next===active.signature)return;
     active.signature=next;
-    render(active.section,simulation,agent,preserve?Number(active.section.dataset.selectedIndex):null);
+    render(active.section,simulation,agent,preserve?Number(active.section.dataset.selectedIndex):null,active.translate,active.showFlat);
   }
-  root.Warrior.on('simulation:update',()=>refresh());
+  root.Warrior?.on?.('simulation:update',()=>refresh());
   root.addEventListener('warrior-language-change',()=>refresh(true));
 })(typeof window==='object'?window:globalThis);

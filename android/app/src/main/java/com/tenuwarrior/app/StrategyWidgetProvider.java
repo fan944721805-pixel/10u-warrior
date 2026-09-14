@@ -13,10 +13,10 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.util.SizeF;
+import android.widget.RemoteViews;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import android.widget.RemoteViews;
 import org.json.JSONObject;
 
 public class StrategyWidgetProvider extends AppWidgetProvider {
@@ -69,28 +69,30 @@ public class StrategyWidgetProvider extends AppWidgetProvider {
         Bundle options = manager.getAppWidgetOptions(id);
         if (Build.VERSION.SDK_INT >= 31) {
             ArrayList<SizeF> sizes = options.getParcelableArrayList(AppWidgetManager.OPTION_APPWIDGET_SIZES);
-            Map<SizeF, RemoteViews> layouts = new LinkedHashMap<>();
-            if (sizes != null) for (SizeF size : sizes) {
-                if (size.getWidth() > 0 && size.getHeight() > 0 && layouts.size() < 16)
-                    layouts.put(size, sizedViews(context, id, size.getWidth(), size.getHeight()));
+            if (sizes != null && !sizes.isEmpty()) {
+                Map<SizeF, RemoteViews> layouts = new LinkedHashMap<>();
+                for (SizeF size : sizes) {
+                    if (size.getWidth() > 0 && size.getHeight() > 0 && layouts.size() < 16)
+                        layouts.put(size, pageViews(context, id, size.getWidth(), size.getHeight()));
+                }
+                if (!layouts.isEmpty()) { manager.updateAppWidget(id, new RemoteViews(layouts)); return; }
             }
-            if (!layouts.isEmpty()) { manager.updateAppWidget(id, new RemoteViews(layouts)); return; }
         }
-        // Some OEM launchers omit the exact sizes. Retain the platform's two
-        // orientation sizes instead of assuming the original fixed row height.
-        RemoteViews portrait = sizedViews(context, id, options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 250), options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 220));
-        RemoteViews landscape = sizedViews(context, id, options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH, 250), options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 220));
+        RemoteViews portrait = pageViews(context, id, options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 280),
+                options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 340));
+        RemoteViews landscape = pageViews(context, id, options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH, 340),
+                options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 280));
         manager.updateAppWidget(id, new RemoteViews(landscape, portrait));
     }
-    private static RemoteViews sizedViews(Context context, int id, float width, float height) {
+    static RemoteViews pageViews(Context context, int id, float width, float height) {
         JSONObject data = snapshot(context);
         RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.strategy_widget);
-        Intent adapter = new Intent(context, StrategyWidgetService.class).putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id);
-        adapter.setData(Uri.parse("warrior-widget://adapter/" + id));
+        Intent adapter = new Intent(context, StrategyWidgetService.class).putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
+                .putExtra("pageWidth", width).putExtra("pageHeight", height);
+        adapter.setData(Uri.parse("warrior-widget://adapter/" + id + "/" + width + "/" + height));
         if (Build.VERSION.SDK_INT >= 31) {
-            StrategyWidgetService.Factory factory = new StrategyWidgetService.Factory(context, id);
+            StrategyWidgetService.Factory factory = new StrategyWidgetService.Factory(context, width, height);
             factory.onCreate();
-            factory.size(Math.max(1, width), Math.max(1, height));
             RemoteViews.RemoteCollectionItems.Builder items = new RemoteViews.RemoteCollectionItems.Builder()
                     .setHasStableIds(true).setViewTypeCount(1);
             for (int position = 0; position < factory.getCount(); position++) items.addItem(factory.getItemId(position), factory.getViewAt(position));

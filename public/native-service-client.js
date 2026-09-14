@@ -26,13 +26,13 @@
       if (!result.ok) throw Object.assign(Error(result.code || 'MOBILE_SERVICE_FAILED'), { code: result.code || 'MOBILE_SERVICE_FAILED' });
       return result.value;
     }
-    const api = { mode: 'native', keepInBackground: true, serviceOwned: true, walletSupported: false,
+    const api = { mode: 'native', keepInBackground: true, serviceOwned: true, walletSupported: true,
       clientId: 'android-local', release: () => false, networkStatus: () => ({ ...network }),
       subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
       serviceStatus: () => plugin.status(),
       dispose: async () => { for (const registration of registrations) await (await registration).remove(); },
     };
-    for (const method of ['create','setEnabled','topUp','setEmotion','setActionUrge','setRealtimeEntry','end',
+    for (const method of ['create','setEnabled','topUp','setGlobalControls','setEmotion','setActionUrge','setRealtimeEntry','end',
       'retryConnection','reset','remove','getStrategies','strategies','setStrategies','indicators','prices',
       'valuation','executions','checkNetwork','configureWidget']) api[method] = (...args) => invoke(method, args);
     // AbortSignals belong to this UI request and are never serialized across IPC.

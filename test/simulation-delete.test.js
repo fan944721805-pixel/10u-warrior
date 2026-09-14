@@ -5,6 +5,8 @@ test('delete archives one battle, preserves other battles, survives restart and 
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'battle-delete-'));
   try {
     const options={source:{},file:path.join(dir,'ledger.json'),leaseEnabled:true};
+    // Explicit pre-migration ledger: fresh installations no longer create an A/B/C battle.
+    require('../prediction-sim').createPredictionSimulation({source:{},file:options.file}).setEnabled(false);
     const sim=createSimulationBattles(options),one=sim.create('one'),two=sim.create('two');
     const before=sim.snapshot(two.id),policies=sim.getStrategies();
     await sim.remove(one.id);

@@ -1,11 +1,11 @@
 # 技术参考与历史验证
 
-原 README 的详细说明保留于此。命令在项目根目录运行；带日期的测试与行情记录只代表当时结果。返回 [项目首页](../README.md) 查看简介与下载入口。
+原 README 的详细说明作为历史参考保留于此，包含已退役的旧页面和离线演示。命令、入口及版本须以当前 [项目首页](../README.md)、[UI 架构](../UI_ARCHITECTURE.md) 和 [迁移记录](./strategy-system/12-production-migration.md) 为准；下文带日期的测试与行情记录只代表当时结果。
 
 
 移动端优先的 AI 策略模拟对局应用：选择角色、分配虚拟本金，观察决策、结算、收益曲线与战报。使用原生 HTML/CSS/JavaScript 和 Node.js，保留动漫紫、荧光黄及卡通战神风格。
 
-**当前试用发布：0.1.9 · Android versionCode 10 · Web npm 包 0.1.0。** 自动对局使用模拟资金，真实交易默认关闭。Node 网页版面向本机单用户；Android 在手机本地运行并直接联网。功能更新单独记录在 [CHANGELOG.md](../CHANGELOG.md)。
+**历史试用发布：0.1.9 · Android versionCode 10 · Web npm 包 0.1.0。** 自动对局使用模拟资金。Node 网页版面向本机单用户；Android 在手机本地运行并直接联网。后续变化见 [CHANGELOG.md](../CHANGELOG.md)。
 
 下载 [GitHub 试用发布](https://github.com/fan944721805-pixel/10u-warrior/releases/tag/v0.1.9-preview.1)：安卓安装 APK；电脑解压 Web ZIP，安装 Node.js 22+ 后双击 `start-web.cmd`。详见 [最简试用说明](../TRY_ME.md)。APK 使用现有测试签名；Web 试用启动器关闭真实报价和交易。
 
@@ -18,7 +18,7 @@ npm ci
 npm start
 ```
 
-打开 [本机应用](http://127.0.0.1:5174)。不连接钱包也可使用公开行情进行虚拟对局；使用 [离线演示](http://127.0.0.1:5174/?offline=1) 可体验本地模拟行情。
+打开 [本机应用](http://127.0.0.1:5174)。不连接钱包也可使用公开行情进行虚拟对局。新版已移除随机离线演示入口。
 
 ## 本次功能更新
 

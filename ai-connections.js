@@ -5,6 +5,7 @@ const { atomicWriteJson } = require('./atomic-json');
 const { profiles } = require('./public/strategy-catalog');
 const { assertDecisionInputs, decisionPrompt, createMockDecisionProvider, DECISION_META } = require('./ai-decision');
 const { aiFetch } = require('./ai-transport');
+const { samplingFor,deepseekNonThinking } = require('./ai-sampling.cjs');
 const RETRY_DELAYS = [500, 1000];
 const RETRYABLE = new Set(['AI_REQUEST_FAILED', 'AI_REQUEST_TIMEOUT', 'AI_RATE_LIMITED', 'AI_UPSTREAM_UNAVAILABLE']);
 const CONNECTION_FAILURES = new Set([...RETRYABLE, 'AI_AUTH_FAILED', 'AI_CONNECTION_NOT_TESTED']);
@@ -96,7 +97,7 @@ function createAiConnections({ file, fetchImpl = aiFetch, now = Date.now, wait =
       assignments: state.assignments, usage: state.usage, recent: state.recent.slice(-30).reverse(), storageFailed: broken,
       defaultEngine: fallback.describe() });
   }
-  function accountCall(c, strategy, kind, startedAt, payload, error) {
+  function accountCall(c, strategy, kind, startedAt, payload, error, sampling) {
     const usage = usageOf(payload, c.provider);
     const next = structuredClone(state);
     const aggregate = next.usage[c.id] ||= { calls: 0, errors: 0, tests: 0, input: 0, output: 0, cached: 0, total: 0, missingUsageCalls: 0 };
@@ -104,7 +105,7 @@ function createAiConnections({ file, fetchImpl = aiFetch, now = Date.now, wait =
     if (usage) for (const k of ['input', 'output', 'cached', 'total']) aggregate[k] += usage[k];
     else aggregate.missingUsageCalls++;
     const event = { id: crypto.randomUUID(), connectionId: c.id, model: c.model, strategy, kind, at: now(), durationMs: now() - startedAt,
-      usage, error: error || null };
+      usage, error: error || null, sampling };
     aggregate.last = event;
     next.recent = [...next.recent, event].slice(-200);
     if (next.connections[c.id]?.revision === c.revision) {
@@ -116,7 +117,7 @@ function createAiConnections({ file, fetchImpl = aiFetch, now = Date.now, wait =
   }
   async function invoke(c, prompt, input, options = {}, kind = 'decision') {
     if (broken) throw fail('AI_STORAGE_FAILED', 503);
-    const started = now(), budget = Math.floor(Math.min(kind === 'test' ? 15000 : 8000, (options.deadlineMs ?? Infinity) - (options.now || now)() - 250));
+    const started = now(), budget = Math.floor(Math.min(kind === 'test' ? 15000 : input.market.entry_mode === 'precompute' ? 20000 : 8000, (options.deadlineMs ?? Infinity) - (options.now || now)() - 250));
     if (budget <= 0 || options.isCancelled?.()) throw Object.assign(fail('AI_DEADLINE_EXPIRED'), { requestStarted: false });
     const secret = unseal(c.secret);
     const isClaude = c.provider === 'anthropic', isOpenai = c.provider === 'openai';
@@ -124,9 +125,11 @@ function createAiConnections({ file, fetchImpl = aiFetch, now = Date.now, wait =
       ? { model: c.model, max_tokens: 1500, system: prompt, messages: [{ role: 'user', content: JSON.stringify(input) }] }
       : { model: c.model, messages: [{ role: 'system', content: prompt }, { role: 'user', content: JSON.stringify(input) }],
         response_format: { type: 'json_object' }, ...(isOpenai ? { max_completion_tokens: 4096 } : { max_tokens: 1500 }),
-        ...(c.provider === 'deepseek' ? { thinking: { type: 'disabled' } } : {}) };
+        ...(c.provider === 'deepseek' ? deepseekNonThinking(c.model) : {}) };
+    const sampling=samplingFor({provider:c.provider,model:c.model,variance:input.policy?.decision_variance,kind,thinkingDisabled:body.thinking?.type==='disabled'});
+    Object.assign(body,sampling.parameters);
     let payload, raw, failure;
-    if(kind==='decision')options.onRequest?.({provider:c.provider,body:structuredClone(body),responseContract:'strategy-v2'});
+    if(kind==='decision')options.onRequest?.({provider:c.provider,body:structuredClone(body),sampling:sampling.audit,responseContract:'strategy-v2'});
     try {
       const response = await fetchImpl(`${c.baseUrl}/${isClaude ? 'messages' : 'chat/completions'}`, {
         method: 'POST', redirect: 'error', signal: AbortSignal.timeout(budget),
@@ -142,9 +145,9 @@ function createAiConnections({ file, fetchImpl = aiFetch, now = Date.now, wait =
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw fail('AI_RESPONSE_INVALID');
       if (kind === 'test' && (raw.round_id !== input.market.round_id || raw.action !== 'SKIP' || raw.direction !== null || raw.stake_usdt !== 0 || raw.stake_pct !== 0 || raw.risk_mode !== 'WAIT' || raw.data_fresh !== true || !Number.isFinite(raw.confidence) || raw.confidence < 0 || raw.confidence > 100 || typeof raw.reason !== 'string' || !Array.isArray(raw.factors) || !Array.isArray(raw.warnings))) throw fail('AI_TEST_DECISION_INVALID');
     } catch (e) { failure = e.code?.startsWith?.('AI_') ? e : fail(e.name === 'TimeoutError' || e.name === 'AbortError' ? 'AI_REQUEST_TIMEOUT' : 'AI_REQUEST_FAILED', 503); }
-    const event = accountCall(c, input.policy?.strategy || null, kind, started, payload, failure?.code);
+    const event = accountCall(c, input.policy?.strategy || null, kind, started, payload, failure?.code, sampling.audit);
     if (failure) throw failure;
-    Object.defineProperty(raw, DECISION_META, { value: { engine: engine(c), usage: event, ...(kind==='decision'?{responseContract:'strategy-v2'}:{}) } });
+    Object.defineProperty(raw, DECISION_META, { value: { engine: engine(c), sampling:sampling.audit, usage: event, ...(kind==='decision'?{responseContract:'strategy-v2'}:{}) } });
     return raw;
   }
   async function testConnection(id, revision) {
@@ -209,7 +212,7 @@ function createAiConnections({ file, fetchImpl = aiFetch, now = Date.now, wait =
       assertDecisionInputs(input);
       const cancelled = () => options.isCancelled?.() || (input.policy.ai_connection_id===undefined && state.assignmentVersions?.[input.policy.strategy] !== version) || connectionFor(input) !== id || state.connections[id]?.revision !== c.revision || !state.connections[id]?.testedAt;
       const clock = options.now || now;
-      const deadlineMs = Math.min(options.deadlineMs ?? Infinity, input.market.data_timestamp + 10000);
+      const deadlineMs = Math.min(options.deadlineMs ?? Infinity, input.market.data_timestamp + (input.market.entry_mode === 'precompute' ? 45000 : 10000));
       for (let attempt = 0; ; attempt++) {
         if (cancelled()) throw fail('AI_CONFIGURATION_CHANGED');
         try {

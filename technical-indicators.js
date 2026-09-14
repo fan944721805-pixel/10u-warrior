@@ -67,6 +67,7 @@ function extendedIndicators(rows, depth) {
   result.volatility=n>=21?{perMinutePct:std(c.slice(-20).map((v,i)=>Math.log(v/c[n-21+i])))*100}:null;
   const prior=rows.slice(-21,-1),high=Math.max(...prior.map(r=>r.high)),low=Math.min(...prior.map(r=>r.low));
   result.donchian=n>=21?{upper:high,lower:low,close:last.close,breakout:last.close>high?1:last.close<low?-1:0}:null;
+  if(n>=22){const previousRange=rows.slice(-22,-2);result.donchian.previous={upper:Math.max(...previousRange.map(r=>r.high)),lower:Math.min(...previousRange.map(r=>r.low)),close:rows.at(-2).close};}
   const flow5=rows.slice(-5),total5=sum(flow5.map(r=>r.volume));
   const buy5=flow5.every(r=>Number.isFinite(r.takerBuyVolume))?sum(flow5.map(r=>r.takerBuyVolume)):null;
   result.takerFlow=n>=5&&total5>0&&buy5!==null?{buyRatio:buy5/total5,netBase:2*buy5-total5,totalBase:total5}:null;

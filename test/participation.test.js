@@ -76,7 +76,7 @@ function simulationFixture(file,decide=skip){
   const provider={describe:()=>({mode:'deepseek',simulated:false}),decide:async input=>{calls.push(input);return decide(input);}};
   const options={file,source,indicatorSource,decisionProvider:provider,agentPolicies:policies,policyFor:id=>policies.find(p=>p.id===id),now:()=>now,realtimeEntry:true};
   let sim=createPredictionSimulation(options);
-  return {calls,options,get sim(){return sim;},at:async delta=>{now=slot+delta;await sim.tick();},break:value=>broken=value,restore:()=>sim=createPredictionSimulation(options)};
+  return {calls,options,get sim(){return sim;},at:async delta=>{now=slot+delta;await sim.tick();await new Promise(resolve=>setImmediate(resolve));},break:value=>broken=value,restore:()=>sim=createPredictionSimulation(options)};
 }
 test('all seven independent seats review at opening, cooldown limits calls, and Show-off waits for CZ',async()=>{
   const f=simulationFixture();await f.at(-20000);await f.at(0);
@@ -84,7 +84,7 @@ test('all seven independent seats review at opening, cooldown limits calls, and 
   assert.equal(f.sim.snapshot().agents.find(a=>a.id==='showoff').waitReason,'WAIT_CZ_BET');
   await f.at(5000);await f.at(55000);assert.equal(f.calls.length,7);
   await f.at(60000);assert.equal(f.calls.length,14);
-  await f.at(269000);assert.equal(f.calls.length,21);await f.at(270000);assert.equal(f.calls.length,21);
+  await f.at(269000);assert.equal(f.calls.filter(i=>i.market.round_id===String(slot)).length,21);assert.equal(f.calls.filter(i=>i.market.round_id===String(slot+ROUND)).length,6);await f.at(270000);assert.equal(f.calls.length,27);
 });
 test('same-round recovery preserves cards and review budget across restart and resumes unfilled seats',async()=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'warrior-participation-'));

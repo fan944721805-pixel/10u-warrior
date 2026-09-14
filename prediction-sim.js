@@ -1,4 +1,7 @@
+const cardTraits=require('./card-traits.cjs');
+const cardCapital=require('./card-capital.cjs');
 const fs = require('node:fs');
+const globalControl = require('./global-controls.cjs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { roundContext } = require('./round-direction');
@@ -20,6 +23,7 @@ const STAKE = 5;
 const ENTRY_POLL_MS = 5000;
 const ENTRY_COOLDOWN_MS = 30000;
 const ENTRY_CLOSE_BUFFER_MS = 30000;
+const PRECOMPUTE_LEAD_MS = 45000;
 const error = code => Object.assign(new Error(code), { code });
 function normalizeBattleEmotion(value = 0) {
   if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 100) throw error('INVALID_BATTLE_EMOTION');
@@ -179,10 +183,11 @@ function createPredictionSource(run) {
 }
 
 function createPredictionSimulation({ source, indicatorSource, decisionProvider, policyFor, agentPolicies, initialBalance = 100, maxRounds = null,
-  asset = 'BTCUSDT', period = '5m', emotionLevel = 0, actionUrgeLevel = 0, realtimeEntry = false, file, now = Date.now, random = () => crypto.randomInt(2), enabled = true, leaseEnabled = false, leaseMs = 30000, pauseOnRestore = false, pauseOnError = false, onChange = () => {} }) {
+  asset = 'BTCUSDT', period = '5m', emotionLevel = 0, actionUrgeLevel = 0, globalControls, realtimeEntry = false, file, now = Date.now, random = () => crypto.randomInt(2), enabled = true, leaseEnabled = false, leaseMs = 30000, pauseOnRestore = false, pauseOnError = false, onChange = () => {} }) {
   let normalizedAsset = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT'].includes(String(asset).toUpperCase()) ? String(asset).toUpperCase() : 'BTCUSDT';
   const normalizedPeriod = normalizePeriod(period);
   let roundMs = PERIODS[normalizedPeriod];
+  const initialControls=globalControl.fromConfig({globalControls,emotionLevel,actionUrgeLevel});
   const startingPolicies = Array.isArray(agentPolicies) && agentPolicies.length ? agentPolicies : ['A', 'B', 'C'].map(id => ({ id }));
   const startingBalance = Math.max(0.01, Math.round(Number(initialBalance) * 100) / 100 || 100);
   const roundLimit = maxRounds === 'until-loss' || maxRounds == null ? null : Math.max(1, Math.floor(Number(maxRounds)) || 1);
@@ -198,7 +203,7 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
     endedAt: null,
     rounds: [],
     auditTrail: [],
-    config: { initialBalance: startingBalance, maxRounds: roundLimit, asset: normalizedAsset, period: normalizedPeriod, roundMs, emotionLevel: normalizeBattleEmotion(emotionLevel), actionUrgeLevel: normalizeBattleActionUrge(actionUrgeLevel), realtimeEntry: normalizeRealtimeEntry(realtimeEntry) },
+    config: { initialBalance: startingBalance, maxRounds: roundLimit, asset: normalizedAsset, period: normalizedPeriod, roundMs, emotionLevel: initialControls.tilt, actionUrgeLevel: initialControls.urge, globalControls:initialControls, realtimeEntry: normalizeRealtimeEntry(realtimeEntry) },
     agents: makeInitialAgents(),
     lastSeenAt: leaseEnabled ? now() : null,
   };
@@ -225,9 +230,16 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
     state.auditTrail = Array.isArray(state.auditTrail) ? state.auditTrail : [];
     state.lastSeenAt = state.lastSeenAt ?? (leaseEnabled ? now() : null);
   }
+  try { state.config.globalControls=globalControl.fromConfig(state.config); } catch { throw error('INVALID_SIM_LEDGER'); }
+  state.config.emotionLevel=state.config.globalControls.tilt;state.config.actionUrgeLevel=state.config.globalControls.urge;
   normalizedAsset = state.config.asset;
   roundMs = state.config.roundMs;
   for (const agent of state.agents) agent.policy = normalizePolicy(agent.policy || policyFor?.(agent.id), agent.id);
+  for(const a of state.agents)if(a.policy.cardSnapshot)a.personalEmotion=globalControl.restoreEmotion(a.personalEmotion,state.rounds.filter(slot=>slot+roundMs<=now()));
+  for(const a of state.agents)if(a.policy.traitsVersion==='CT-1'){
+    if(restored&&!a.cardTraitState)throw error('INVALID_CARD_TRAIT_STATE');
+    a.cardTraitState=cardTraits.restore(a.cardTraitState);
+  }
   let storageFailed = false, storageIssue = null, controlVersion = 0;
   state.viewInstance = typeof state.viewInstance === 'string' && state.viewInstance ? state.viewInstance : crypto.randomUUID();
   state.viewRevision = Number.isSafeInteger(state.viewRevision) && state.viewRevision >= 0 ? state.viewRevision : 0;
@@ -271,6 +283,15 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
   for (const a of state.agents) if (a.lastStatus === 'QUOTING') a.lastStatus = 'SKIPPED';
   let nextSlot = nextRoundSlot(now(), roundMs);
   let prepared = null, busy = false, lastPrepare = 0, lastSettle = 0, failure = null;
+  let preparation = null;
+  const preparationKey = a => JSON.stringify([policy(a.id), account(a), state.config.controlsRevision,
+    state.config.globalControls]);
+  function preparationView(a) {
+    if (!preparation || preparation.version !== controlVersion || !state.enabled || preparation.slot < now()) return null;
+    const item = preparation.agents.get(a.id);
+    return item ? { roundId:String(preparation.slot), status:item.status, direction:item.raw?.direction || null,
+      action:item.raw?.action || null, updatedAt:item.updatedAt, reason:item.reason || null } : null;
+  }
   const { RETRY_DELAYS, SETTLEMENT_POLL_MS, recoveryKind } = require('./recovery-policy');
   let recoveryProbe = false;
   state.recovery = state.recovery || null;
@@ -383,6 +404,7 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
   }
   let lastEntryPoll = -Infinity;
   const integratedDecisions = Boolean(indicatorSource && decisionProvider && policyFor);
+  if(!integratedDecisions&&state.agents.some(a=>a.policy.capitalVersion==='SC-2'))throw error('CARD_ENGINE_REQUIRED');
   const restoredRound = state.rounds.at(-1);
   if (!state.entryRound && restoredRound != null && now() < restoredRound + roundMs) {
     const evidence = state.auditTrail.find(e => e.type === 'MARKET_SNAPSHOT' && e.roundId === String(restoredRound));
@@ -403,9 +425,21 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
     return status === 'WON' ? { winStreak: length, lossStreak: 0 } : { winStreak: 0, lossStreak: length };
   }
   function capitalForAgent(a) {
+    if(a.policy.capitalVersion==='SC-2'){
+      const result=cardCapital.context(a.policy,{balance:a.cash,initialBalance:state.config.initialBalance,addedCapital:a.addedCapital||0,
+        openStake:a.orders.filter(o=>o.status==='OPEN').reduce((sum,o)=>sum+o.amount,0),capitalStopped:a.capitalStopped});
+      return result;
+    }
     return capitalManagement({strategy:a.policy.strategy,balance:a.cash,initialBalance:state.config.initialBalance+(a.addedCapital||0),openStake:a.orders.filter(o=>o.status==='OPEN').reduce((sum,o)=>sum+o.amount,0),recoveryActive:a.capitalRecovery});
   }
-  const minimumStake = a => capitalForAgent(a).recoveryActive ? .01 : MIN_STAKE;
+  function syncCapitalStops(){
+    let changed=false;
+    for(const a of state.agents)if(a.policy.capitalVersion==='SC-2'&&!a.capitalStopped){
+      const c=capitalForAgent(a);if(c.stopped){a.capitalStopped=true;a.lastStatus='STOPPED';a.reason='CARD_STOP_LOSS';changed=true;record('CAPITAL_STOPPED',{agentId:a.id,netEquity:c.netEquity,stopAt:c.stopAt});}
+    }
+    if(changed)save('capital-stop');
+  }
+  const minimumStake = a => a.policy.capitalVersion==='SC-2'?(capitalForAgent(a).stopped?Infinity:cardCapital.MINIMUM):capitalForAgent(a).recoveryActive?.01:MIN_STAKE;
   function account(a) {
     const open = a.orders.filter(order => order.status === 'OPEN');
     const wins = a.orders.filter(order => order.status === 'WON').length;
@@ -413,7 +447,7 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
     const initialBalance=state.config.initialBalance+(a.addedCapital||0),openStake=open.reduce((sum,order)=>sum+order.amount,0);
     const recovery=capitalForAgent(a).recoveryActive;
     if(recovery!==Boolean(a.capitalRecovery)){a.capitalRecovery=recovery;save('capital-mode');}
-    return { balance:a.cash,initialBalance,openStake,capitalRecovery:a.capitalRecovery,wins,losses,...streaks(a.orders) };
+    return { balance:a.cash,initialBalance,baseInitialBalance:state.config.initialBalance,addedCapital:a.addedCapital||0,capitalStopped:a.capitalStopped,openStake,capitalRecovery:a.capitalRecovery,personalEmotion:a.personalEmotion,cardTraitState:a.cardTraitState,wins,losses,...streaks(a.orders) };
   }
   function touchState() {
     if (leaseEnabled) state.lastSeenAt = now();
@@ -479,7 +513,7 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
         const orders = !includeOrders ? [] : compact ? a.orders.map(order => compactOrder(order, references)) : a.orders;
         const watching = state.enabled && !state.recovery && state.config.realtimeEntry && state.entryRound && now() < state.entryRound.slot + roundMs - ENTRY_CLOSE_BUFFER_MS &&
           a.cash >= minimumStake(a) && a.lastStatus !== 'QUOTING' && !a.orders.some(order => order.start === state.entryRound.slot);
-        return { ...a, lastStatus: watching ? 'WATCHING' : a.lastStatus, policy: policy(a.id), orders, reserved: open.reduce((sum, order) => sum + order.amount, 0),
+        return { ...a, ...(a.cardTraitState?{traitEffects:cardTraits.effects(a.cardTraitState,a.policy.cardTraits,{netEquity:a.cash+open.reduce((n,o)=>n+o.amount,0)-(a.addedCapital||0),initial:state.config.initialBalance})}:{}), preparation:preparationView(a), lastStatus: watching ? 'WATCHING' : a.lastStatus, policy: policy(a.id), orders, reserved: open.reduce((sum, order) => sum + order.amount, 0),
           reconciliation: { mode: 'paper', initialBalance: state.config.initialBalance, addedCapital:a.addedCapital||0, totalDebits, totalCredits, expectedCash, actualCash: a.cash,
             difference: Math.round((a.cash - expectedCash) * 1e8) / 1e8, matched: Math.abs(a.cash - expectedCash) < 1e-7, feesIncluded: a.orders.every(o => o.quote?.feesIncluded === true) },
           equity: a.cash + open.reduce((sum, order) => sum + order.amount, 0),
@@ -534,10 +568,78 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
           shares: o.quote.shares, payoutPerShare: split ? 0.5 : o.status === 'WON' ? 1 : 0,
           payout: o.payout, netProfit: o.payout - o.amount, cashBefore, cashAfter: a.cash, feesIncluded: o.quote.feesIncluded === true,
           evidenceEventId };
+        if(a.personalEmotion)globalControl.settleEmotion(a.personalEmotion,o.status,policy(a.id).emotionSensitivity,state.config.globalControls);
+        if(a.cardTraitState)cardTraits.settle(a.cardTraitState,policy(a.id).cardTraits,{id:o.id,status:o.status,netProfit:o.payout-o.amount,netEquity:a.cash+a.orders.filter(x=>x.status==='OPEN').reduce((n,x)=>n+x.amount,0)-(a.addedCapital||0),initial:state.config.initialBalance});
         record('SETTLEMENT', { roundId: String(o.start), agentId: a.id, orderId: o.id, settlement: o.settlement });
       }
       save('settlement');
+      syncCapitalStops();
     }
+    coolCompletedRounds();
+  }
+  function coolCompletedRounds(){
+    const completed=state.rounds.filter(slot=>slot+roundMs<=now());
+    let cooled=false;
+    for(const a of state.agents)if(a.personalEmotion)cooled=globalControl.coolEmotion(a.personalEmotion,completed,state.config.globalControls)||cooled;
+    for(const a of state.agents)if(a.cardTraitState)cooled=cardTraits.complete(a.cardTraitState,completed)||cooled;
+    if(cooled)save('emotion-traits-cooled');
+  }
+  function markTraits(a,slot,outcome,input){
+    if(input?.policy.trait_effects?.paused)outcome='paused';
+    const changed=Boolean(a.cardTraitState&&cardTraits.mark(a.cardTraitState,a.policy.cardTraits,slot,outcome,{resonant:outcome!=='paused'&&input?.policy.trait_effects?.nextTier}));
+    if(changed)record('TRAIT_ROUND_OBSERVED',{agentId:a.id,roundId:String(slot),outcome});
+    return changed;
+  }
+  // Forecasts never reserve cash or create orders. Keep them in memory: a restart,
+  // policy edit, pause, account change or market change invalidates their use.
+  function startPreparation(market, slot) {
+    if (!integratedDecisions || state.config.maxRounds && state.rounds.length >= state.config.maxRounds || preparation?.slot === slot && preparation.version === controlVersion) return;
+    const batch = preparation = { slot, version:controlVersion, marketId:String(market.marketTopicId), agents:new Map() };
+    const valid = () => preparation === batch && state.enabled && !state.recovery && !storageFailed &&
+      controlVersion === batch.version && now() < slot;
+    for (const a of state.agents) if (a.cash >= minimumStake(a) && decisionStage(policy(a.id).strategy) === 0)
+      batch.agents.set(a.id, { status:'calculating', updatedAt:now() });
+    markChanged('precompute-started');
+    batch.task = (async () => {
+      const [indicators, upBook, downBook] = await Promise.all([indicatorSource.snapshot(normalizedAsset, state.config.period),
+        (source.previewBook || source.book)(market, 'UP'), (source.previewBook || source.book)(market, 'DOWN')]);
+      if (!valid()) return;
+      const at = now();
+      const up = quoteFromBook(upBook, String(market.markets[0].outcomes.find(o=>o.name==='Up').tokenId), at, 1);
+      const down = quoteFromBook(downBook, String(market.markets[0].outcomes.find(o=>o.name==='Down').tokenId), at, 1);
+      const snapshotId = record('PRECOMPUTE_SNAPSHOT', { roundId:String(slot), market, indicators, books:{up:upBook,down:downBook} });
+      await Promise.all(state.agents.filter(a=>batch.agents.has(a.id)).map(async a => {
+        const item = batch.agents.get(a.id), currentPolicy = policy(a.id);
+        try {
+          const input = buildDecisionContext({ market:{roundId:slot,timeframe:state.config.period,roundDurationSeconds:roundMs/1000,
+            secondsToClose:roundMs/1000,upOdds:up.odds,downOdds:down.odds,dataTimestamp:Math.min(up.bookTime,down.bookTime,indicators.dataTimestamp),
+            roundContext:roundContext(market,indicators,slot,roundMs/1000,indicators.dataTimestamp)}, indicators, account:account(a),
+            policy:currentPolicy,battleEmotion:state.config.emotionLevel,battleActionUrge:state.config.actionUrgeLevel,globalControls:state.config.globalControls });
+          input.market.entry_mode='precompute'; input.market.seconds_to_start=(slot-at)/1000;
+          input.policy.controls_revision=state.config.controlsRevision||0;
+          const engine=decisionProvider.describeFor?.(input)||decisionProvider.describe();
+          if(!['mock','off','offline','legacy'].includes(engine.mode))input.policy.review_mode='model';
+          else if(state.config.realtimeEntry && !entrySignal(input)){item.status='waiting';return;}
+          assertDecisionInputs(input);
+          if(input.policy.trait_effects?.paused){item.status='waiting';item.reason='CARD_TRAIT_COOLDOWN';return;}
+          if(!Number.isFinite(indicators.dataTimestamp) || at-indicators.dataTimestamp>10000 || indicators.dataTimestamp>at+2000)throw error('AI_DATA_STALE');
+          item.key=preparationKey(a);
+          const inputEventId=record('PRECOMPUTE_INPUT',{roundId:String(slot),agentId:a.id,snapshotId,input,policy:currentPolicy});
+          save('precompute-input');
+          const raw=await decisionProvider.decide(input,{deadlineMs:slot,now,isCancelled:()=>!valid(),onRequest:request=>{
+            if(!valid())throw error('QUOTE_WINDOW_MISSED');
+            record('MODEL_REQUEST',{roundId:String(slot),agentId:a.id,inputEventId,request,precomputed:true});save('precompute-request');
+          }});
+          if(!valid())return;
+          // Validate the original evidence at capture time; execution separately
+          // validates fresh indicators, current funds, price drift and new odds.
+          validateDecision(raw,{input,indicators,policy:currentPolicy,now:at});
+          Object.assign(item,{status:'ready',raw,input,indicators,at,inputEventId,updatedAt:now()});
+          record('PRECOMPUTE_READY',{roundId:String(slot),agentId:a.id,inputEventId,response:raw});
+        } catch(cause) { item.status='failed';item.reason=cause.code||'AI_DECISION_FAILED';item.updatedAt=now(); }
+      }));
+    })().catch(cause=>{for(const item of batch.agents.values()){item.status='failed';item.reason=cause.code||'INPUT_UNAVAILABLE';}})
+      .finally(()=>{if(valid())try{save('precompute-finished');}catch{ /* storage failure is already latched */ }});
   }
   async function decideRound(market, slot, attemptVersion, signalOnly = false) {
     const deadlineMs = signalOnly ? Math.min(now() + 10000, slot + roundMs - ENTRY_CLOSE_BUFFER_MS) : slot + 10000;
@@ -569,7 +671,7 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
         const decisionJobs = state.agents.filter(a => (signalOnly ? a.cash >= minimumStake(a) && !a.orders.some(o => o.start === slot) : a.lastStatus === 'QUOTING') && decisionStage(policy(a.id).strategy) === stage).flatMap(a => {
           let entryKey;
           const currentPolicy = policy(a.id);
-          const input = buildDecisionContext({ market: marketInput, indicators, account: account(a), policy: currentPolicy, battleEmotion: state.config.emotionLevel, battleActionUrge: state.config.actionUrgeLevel, peers,
+          const input = buildDecisionContext({ market: marketInput, indicators, account: account(a), policy: currentPolicy, battleEmotion: state.config.emotionLevel, battleActionUrge: state.config.actionUrgeLevel, globalControls:state.config.globalControls, peers,
             frozenDivination: state.entryRound?.oracles[a.id] });
           const engine=decisionProvider.describeFor?.(input)||decisionProvider.describe();
           const external=!['mock','off','offline','legacy'].includes(engine.mode);
@@ -592,6 +694,7 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
               }
             }catch(cause){opportunity={reason:cause.code||'AI_INDICATOR_MISSING'};}
             if (!opportunity.key) {
+              if(!external&&opportunity.reason===entryWaitReason(input)){try{assertDecisionInputs(input);oracleChanged=markTraits(a,slot,'wait',input)||oracleChanged;}catch{}}
               a.waitReason=opportunity.reason;
               if (a.lastStatus === 'QUOTING') { a.lastStatus = 'SKIPPED'; a.reason = opportunity.reason; }
               return [];
@@ -600,6 +703,7 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
             entryKey = opportunity.key;
             a.lastStatus = 'QUOTING';
           }else if(currentPolicy.strategy==='showoff'&&!entrySignal(input)){
+            try{assertDecisionInputs(input);oracleChanged=markTraits(a,slot,'wait',input)||oracleChanged;}catch{}
             a.lastStatus='SKIPPED';a.reason=a.waitReason='WAIT_CZ_BET';return [];
           }
           a.waitReason=null;
@@ -612,8 +716,22 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
           if (a.lastStatus !== 'QUOTING') return;
           try {
             assertDecisionInputs(input);
+            if(input.policy.trait_effects?.paused){
+              markTraits(a,slot,'paused',input);a.lastStatus='SKIPPED';a.reason='CARD_TRAIT_COOLDOWN';
+              a.lastDecision={roundId:String(slot),action:'SKIP',reason:a.reason,direction:null,stake:0,stakePct:0,traitEffects:input.policy.trait_effects,engine:{mode:'rules',simulated:true}};
+              record('DECISION',{roundId:String(slot),agentId:a.id,inputEventId,risk:'TRAIT_PAUSE',decision:a.lastDecision});return;
+            }
             if (signalOnly && !validAttempt()) throw error('QUOTE_WINDOW_MISSED');
-            const raw = await decisionProvider.decide(input, { deadlineMs, now, isCancelled: () => !validAttempt(),onRequest:request=>{
+            const candidate=preparation?.slot===slot && preparation.version===attemptVersion && preparation.marketId===String(market.marketTopicId)
+              ? preparation.agents.get(a.id) : null;
+            const forecast=candidate?.status==='ready' && !candidate.used && candidate.key===preparationKey(a) && now()-candidate.at<=PRECOMPUTE_LEAD_MS+10000 ? candidate : null;
+            if(forecast){
+              forecast.used=true;
+              const before=Number(forecast.indicators.price),current=Number(indicators.price);
+              if(before>0 && current>0 && Math.abs(current/before-1)>.0025)throw error('PRECOMPUTE_PRICE_MOVED');
+              record('PRECOMPUTE_REUSED',{roundId:String(slot),agentId:a.id,inputEventId,precomputeInputEventId:forecast.inputEventId,ageMs:now()-forecast.at});
+            }
+            const raw = forecast ? forecast.raw : await decisionProvider.decide(input, { deadlineMs, now, isCancelled: () => !validAttempt(),onRequest:request=>{
               if(!validAttempt())throw error('QUOTE_WINDOW_MISSED');
               record('MODEL_REQUEST',{roundId:String(slot),agentId:a.id,inputEventId,request});
               save('model-request');
@@ -625,12 +743,13 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
             a.lastDecision = audit;
             if (plan.action === 'SKIP') {
               record('DECISION', { roundId: String(slot), agentId: a.id, inputEventId, risk: 'ACCEPTED_SKIP', decision: audit });
+              markTraits(a,slot,'wait',input);
               a.lastStatus = 'SKIPPED'; a.reason = plan.reason || 'AI_SKIPPED'; return;
             }
             if (!validAttempt() || market.markets[0].tradingStatus !== 'OPEN') throw error('QUOTE_WINDOW_MISSED');
             const tokenId = plan.direction === 'UP' ? upToken : downToken;
             let executionBook = plan.direction === 'UP' ? upBook : downBook;
-            if (signalOnly) {
+            if (signalOnly || forecast) {
               const [freshMarket, freshBook] = await Promise.all([readSource('detail', market.marketTopicId), readSource('book', market, plan.direction)]);
               validateMarket(freshMarket, slot, normalizedAsset, roundMs);
               if (String(freshMarket.marketTopicId) !== String(market.marketTopicId) || freshMarket.markets[0].tradingStatus !== 'OPEN' || ['RESOLVED','SETTLED'].includes(freshMarket.markets[0].status) || !validAttempt()) throw error('QUOTE_WINDOW_MISSED');
@@ -658,6 +777,7 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
               cashBefore, cashAfter: a.cash, status: 'OPEN', placedAt: now() };
             if (!Number.isFinite(Number(order.referencePrice)) || Number(order.referencePrice) <= 0) delete order.referencePrice;
             a.orders.push(order);
+            markTraits(a,slot,'bet',input);
             record('PAPER_ORDER', { roundId: String(slot), agentId: a.id, orderId: intent.id, cashBefore, cashAfter: a.cash, quote });
             a.lastStatus = 'OPEN'; a.reason = plan.reason;
           } catch (e) {
@@ -706,6 +826,7 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
         try { await settle(); }
         catch (cause) { enterRecovery(cause, 'settlement'); return; }
       }
+      coolCompletedRounds();syncCapitalStops();
       if (state.config.realtimeEntry && state.config.maxRounds && state.rounds.length >= state.config.maxRounds && now() >= state.rounds.at(-1) + roundMs) finish('ROUND_LIMIT');
       const slot = nextSlot;
       const attemptVersion = controlVersion;
@@ -727,8 +848,8 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
           const eligible = state.enabled && attemptVersion === controlVersion && onBoundary && now() - slot < 10000 && market && Number(market.startDate) === slot;
           state.entryRound = eligible ? { slot, market, oracles: {}, attempts: {} } : null;
           lastEntryPoll = now();
-          for (const a of state.agents) a.lastStatus = !state.enabled ? 'PAUSED' : a.cash < (integratedDecisions ? minimumStake(a) : STAKE) ? 'INSUFFICIENT_FUNDS' : eligible ? 'QUOTING' : 'SKIPPED';
-          for (const a of state.agents) if (a.lastStatus !== 'QUOTING') record('ROUND_SKIPPED', { roundId: String(slot), agentId: a.id, reason: a.lastStatus === 'INSUFFICIENT_FUNDS' ? a.lastStatus : 'MARKET_OR_BOUNDARY_UNAVAILABLE' });
+          for (const a of state.agents) a.lastStatus = !state.enabled ? 'PAUSED' : a.capitalStopped?'STOPPED':a.cash < (integratedDecisions ? minimumStake(a) : STAKE) ? 'INSUFFICIENT_FUNDS' : eligible ? 'QUOTING' : 'SKIPPED';
+          for (const a of state.agents) if (a.lastStatus !== 'QUOTING') record('ROUND_SKIPPED', { roundId: String(slot), agentId: a.id, reason: a.capitalStopped?'CARD_STOP_LOSS':a.lastStatus === 'INSUFFICIENT_FUNDS' ? a.lastStatus : 'MARKET_OR_BOUNDARY_UNAVAILABLE' });
           save('round-started'); // Persist the attempt before I/O, so restart never duplicates a round.
           if (eligible) {
             if (integratedDecisions) {
@@ -778,7 +899,8 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
           } else markChanged('market-prepare-failed');
         }
       }
-      if (state.enabled && !hasOpenOrders() && state.agents.every(agent => agent.cash < (integratedDecisions ? minimumStake(agent) : STAKE))) finish('BALANCE_DEPLETED');
+      if(state.enabled && prepared && nextSlot-now()>2000 && nextSlot-now()<=PRECOMPUTE_LEAD_MS) startPreparation(prepared,nextSlot);
+      if (state.enabled && !hasOpenOrders() && state.agents.every(agent => agent.cash < (integratedDecisions ? minimumStake(agent) : STAKE))) finish(state.agents.some(a=>a.capitalStopped)?'CARD_STOP_LOSS':'BALANCE_DEPLETED');
     } catch (e) {
       failure = e.code || 'SIMULATION_ERROR';
       if (pauseOnError && !['ended', 'settling'].includes(state.lifecycle)) {
@@ -827,6 +949,20 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
     summary,
     touch() { if (!['ended', 'settling'].includes(state.lifecycle)) touchState(); return snapshot(); },
     end(reason = 'MANUAL') { if (storageFailed) throw error('STORAGE_ERROR'); finish(reason); return snapshot(); },
+    setGlobalControls(value,expectedRevision) {
+      if(storageFailed)throw error('STORAGE_ERROR');
+      if(['ended','settling'].includes(state.lifecycle))throw Object.assign(error('BATTLE_ENDED'),{statusCode:409});
+      const controls=globalControl.normalize(value),revision=state.config.controlsRevision||0;
+      if(!Number.isSafeInteger(expectedRevision)||expectedRevision<0)throw Object.assign(error('INVALID_CONTROLS_REVISION'),{statusCode:400});
+      // Repeating an acknowledged or timed-out identical apply is safe.
+      if(JSON.stringify(controls)===JSON.stringify(state.config.globalControls))return snapshot();
+      if(expectedRevision!==revision)throw Object.assign(error('CONTROLS_CHANGED'),{statusCode:409});
+      controlVersion++;
+      state.config.globalControls=controls;state.config.emotionLevel=controls.tilt;state.config.actionUrgeLevel=controls.urge;
+      state.config.controlsRevision=revision+1;
+      record('GLOBAL_CONTROLS_CHANGED',{controls,controlsRevision:revision+1});
+      touchState();save('global-controls');return snapshot();
+    },
     setEmotionLevel(value) {
       if (storageFailed) throw error('STORAGE_ERROR');
       if (['ended', 'settling'].includes(state.lifecycle)) throw error('BATTLE_ENDED');
@@ -834,6 +970,7 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
       if (state.config.emotionLevel === emotionLevel) return snapshot();
       controlVersion++;
       state.config.emotionLevel = emotionLevel;
+      state.config.globalControls.tilt=emotionLevel;
       state.config.controlsRevision=(state.config.controlsRevision||0)+1;
       record('EMOTION_CHANGED', { emotionLevel });
       touchState();
@@ -847,6 +984,7 @@ function createPredictionSimulation({ source, indicatorSource, decisionProvider,
       if (state.config.actionUrgeLevel === actionUrgeLevel) return snapshot();
       controlVersion++;
       state.config.actionUrgeLevel = actionUrgeLevel;
+      state.config.globalControls.urge=actionUrgeLevel;
       state.config.controlsRevision=(state.config.controlsRevision||0)+1;
       record('ACTION_URGE_CHANGED', { actionUrgeLevel });
       touchState();

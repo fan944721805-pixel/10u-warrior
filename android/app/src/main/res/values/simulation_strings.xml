@@ -3,5 +3,6 @@
     <string name="simulation_title">10U Warrior · Simulation</string>
     <string name="simulation_running">Battles running · Tap to view</string>
     <string name="simulation_settling">New bets paused · Settling open orders</string>
+    <string name="wallet_authorizing">Waiting for Binance App authorization</string>
     <string name="simulation_pause">Pause all bets</string>
 </resources>

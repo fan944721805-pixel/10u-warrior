@@ -7,7 +7,7 @@ const {createPredictionSimulation,ROUND}=require('../prediction-sim');
 const {rows,depth}=require('./fixtures/indicator-series.cjs');
 const now=1800000000000;
 test('display names stay bound to the strategy rules and their automatic indicator sets',()=>{
-  const labels={liangXi:'凉兮',fengShui:'风水师',diviner:'占卜师',aggressive:'10U战神',smart:'超级AI',conservative:'守财奴',trendFollowing:'跟风侠',meanReversion:'抄底摸顶王',breakout:'火箭哥',orderFlow:'大单侦探',volatilityGuard:'稳如老狗',consensus:'六票战神',priceAction:'蜡烛哥',czBrother:'CZ大表哥',contrarian:'逆行者',showoff:'装逼的人',firstLady:'一姐'};
+  const labels={kzgMask:'KZG 口罩哥',sunBrother:'孙哥 · 反指',liangXi:'凉兮',fengShui:'风水师',diviner:'占卜师',aggressive:'10U战神',smart:'超级AI',conservative:'守财奴',trendFollowing:'跟风侠',meanReversion:'抄底摸顶王',breakout:'火箭哥',orderFlow:'大单侦探',volatilityGuard:'稳如老狗',consensus:'六票战神',priceAction:'蜡烛哥',czBrother:'CZ大表哥',contrarian:'逆行者',showoff:'装逼的人',firstLady:'一姐'};
   assert.deepEqual(Object.fromEntries(Object.entries(profiles).map(([key,profile])=>[key,profile.label])),labels);
   const coreIndicators={
     aggressive:['priceChange','momentum','roc','volume','takerFlow','orderbook','longReturns','odds'],
@@ -21,7 +21,7 @@ test('display names stay bound to the strategy rules and their automatic indicat
   for(const key of ['trendFollowing','meanReversion','breakout','orderFlow','volatilityGuard','consensus'])assert.deepEqual(profiles[key].recommended,profiles[key].required,key);
 });
 test('all personalities react to streaks at their own level without turning emotion into a direction signal',()=>{
-  const sensitivities={liangXi:95,fengShui:25,diviner:40,aggressive:90,smart:15,conservative:60,trendFollowing:65,meanReversion:75,breakout:70,orderFlow:35,volatilityGuard:5,consensus:20,priceAction:55,czBrother:25,contrarian:30,showoff:75,firstLady:55};
+  const sensitivities={kzgMask:25,sunBrother:35,liangXi:95,fengShui:25,diviner:40,aggressive:90,smart:15,conservative:60,trendFollowing:65,meanReversion:75,breakout:70,orderFlow:35,volatilityGuard:5,consensus:20,priceAction:55,czBrother:25,contrarian:30,showoff:75,firstLady:55};
   assert.deepEqual(Object.fromEntries(Object.entries(profiles).map(([key,profile])=>[key,profile.emotionSensitivity])),sensitivities);
   for(const [strategy,profile] of Object.entries(profiles)){
     const calm=emotionAdjustment({strategy,actionUrge:0,emotionSensitivity:0,lossStreak:3});
@@ -38,7 +38,7 @@ test('all personalities react to streaks at their own level without turning emot
   assert.ok(Math.abs(steady.stakeMultiplier-1)<0.01);assert.ok(gambler.stakeMultiplier>2);
 });
 test('all personalities have an adjustable action urge and every strategy can still skip',async()=>{
-  const urges={liangXi:40,fengShui:50,diviner:55,aggressive:85,smart:60,conservative:35,trendFollowing:60,meanReversion:45,breakout:55,orderFlow:65,volatilityGuard:40,consensus:55,priceAction:85,czBrother:62,contrarian:48,showoff:70,firstLady:78};
+  const urges={kzgMask:35,sunBrother:55,liangXi:40,fengShui:50,diviner:55,aggressive:85,smart:60,conservative:35,trendFollowing:60,meanReversion:45,breakout:55,orderFlow:65,volatilityGuard:40,consensus:55,priceAction:85,czBrother:62,contrarian:48,showoff:70,firstLady:78};
   assert.deepEqual(Object.fromEntries(Object.entries(profiles).map(([key,profile])=>[key,profile.actionUrge])),urges);
   const low=fixture('orderFlow');Object.assign(low.policy,normalizePolicy({strategy:'orderFlow',actionUrge:0},'A'));
   Object.assign(low.indicators,{takerFlow:{buyRatio:.56,netBase:12,totalBase:100},spotOrderBookImbalance:.07,priceChangePct:{oneMinute:.01,fiveMinutes:.04}});

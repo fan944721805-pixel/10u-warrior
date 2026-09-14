@@ -106,3 +106,58 @@ test('a notification pause invalidates an earlier pending resume', async () => {
   await assert.rejects(runtime.api.setEnabled(battle.id,true,{isCancelled:()=>true}),{code:'MOBILE_CONTROL_CANCELLED'});
   assert.equal((await runtime.api.report(battle.id)).enabled,false);
 });
+
+test('native shared runtime applies all controls atomically, persists them, and rejects stale writers',async()=>{
+ const storage=storageBridge(),f=fixture(),runtime=loadRuntime(storage,f);
+ const a=await runtime.api.create('Controls',config,'mobile-controls-create');
+ const controls={urge:45,tilt:70,gain:150,cooling:'slow',variance:80};
+ const result=await runtime.api.setGlobalControls(a.id,controls,0);
+ assert.deepEqual(JSON.parse(JSON.stringify(result.config.globalControls)),controls);
+ assert.equal(result.config.controlsRevision,1);
+ assert.equal((await runtime.api.setGlobalControls(a.id,controls,0)).config.controlsRevision,1);
+ await assert.rejects(runtime.api.setGlobalControls(a.id,{...controls,urge:20},0),e=>e.code==='CONTROLS_CHANGED');
+ const reopened=loadRuntime(storage,f);
+ assert.deepEqual(JSON.parse(JSON.stringify((await reopened.api.report(a.id)).config.globalControls)),controls);
+});
+
+test('native new cards use the same frozen SC-2 capital identity as the server',async()=>{
+ const storage=storageBridge(),f=fixture(),runtime=loadRuntime(storage,f);
+ const card=require('../public/card-lab-data').makeCard('orderFlow','original',123);
+ const limits={maxStakePct:10,exposurePct:25,stopLossPct:20,allowAllIn:false};
+ const expected=require('../ai-decision').normalizePolicy({cardSnapshot:card,capitalLimits:limits},'new');
+ const battle=await runtime.api.create('SC2',{initialBalance:10,period:'5m',capitalLimits:limits,agents:[{id:'new',coin:'BTC',cardSnapshot:card,aiConnectionId:'none'}]},'native-sc2-card-create');
+ assert.equal(battle.agents[0].policy.traitsVersion,'CT-1');assert.equal(battle.agents[0].cardTraitState.version,'CT-1');assert.equal(battle.agents[0].traitEffects.paused,false);
+ assert.equal(battle.agents[0].policy.capitalVersion,'SC-2');assert.equal(battle.agents[0].policy.cardPolicyHash,expected.cardPolicyHash);
+ const restored=loadRuntime(storage,f);assert.equal((await restored.api.report(battle.id)).agents[0].policy.cardPolicyHash,expected.cardPolicyHash);
+});
+
+
+test('native card controls alter supported provider sampling and persist the exact model request',async()=>{
+  const storage=storageBridge(),f=fixture(),runtime=loadRuntime(storage,f);
+  const {makeCard}=require('../public/card-lab-data');
+  const settings={provider:'deepseek',baseUrl:'https://ai.example.test/v1',model:'deepseek-chat',apiKey:'fixture-secret'};
+  assert.equal((await post(runtime,'/api/ai/connections/test',settings)).status,200);
+  const snapshot=await(await runtime.request('/api/ai/settings')).json(),revision=snapshot.connections[0].revision;
+  const battle=await runtime.api.create('Sampling',{initialBalance:100,rounds:2,period:'5m',agents:[{id:'card',cardSnapshot:makeCard('orderFlow','original',123),coin:'BTC',aiConnectionId:'deepseek',aiConnectionRevision:revision}]},'native-sampling-create');
+  await runtime.api.tick();await new Promise(r=>setTimeout(r,30));
+  await runtime.api.setGlobalControls(battle.id,{urge:0,tilt:0,gain:100,cooling:'normal',variance:100},0);
+  f.setTime(SLOT);await runtime.api.tick();
+  const report=await runtime.api.report(battle.id);
+  const request=report.auditTrail.filter(e=>e.type==='MODEL_REQUEST'&&!e.precomputed).at(-1);
+  assert.ok(request);assert.equal(request.request.body.temperature,.65);
+  assert.equal(request.request.sampling.variance,100);
+  assert.equal(report.agents[0].lastDecision.sampling.temperature,.65);
+  assert.equal(report.agents[0].orders.length,0);
+  const restored=await loadRuntime(storage,f).api.report(battle.id);
+  assert.deepEqual(restored.agents[0].lastDecision.sampling,report.agents[0].lastDecision.sampling);
+});
+
+
+test('native service owns collection allowance and restores idempotent draw receipts',async()=>{
+ const storage=storageBridge(),f=fixture(),runtime=loadRuntime(storage,f);
+ const before=await(await runtime.request('/api/cards/collection')).json();assert.equal(before.cards.length,0);assert.equal(before.budget.remaining,5);
+ const r={requestId:'native-collection-draw',revision:before.revision,action:'draw'};
+ const response=await post(runtime,'/api/cards/action',r);assert.equal(response.status,200);const after=await response.json();assert.equal(after.cards.length,1);assert.equal(after.budget.remaining,4);
+ const reopened=loadRuntime(storage,f),again=await(await post(reopened,'/api/cards/action',r)).json();assert.equal(again.replayed,true);assert.equal(again.budget.remaining,4);assert.deepEqual(again.cards,after.cards);
+ const stale=await post(reopened,'/api/cards/action',{...r,requestId:'native-other-draw'});assert.equal(stale.status,409);
+});

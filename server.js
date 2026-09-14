@@ -13,7 +13,9 @@ const { createExecutionBridge } = require('./execution-bridge');
 const { createDeepSeekDecisionProvider, createMockDecisionProvider, createOffDecisionProvider, normalizePolicy, buildDecisionContext, validateDecision, decisionAudit } = require('./ai-decision');
 const { createBinanceIndicatorSource } = require('./market-indicators');
 const { createAiConnections } = require('./ai-connections');
+const { createCardCollection } = require('./card-collection.cjs');
 
+const {allowed: clientAssetAllowed} = require('./client-assets.cjs');
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const BAW_ENTRY = require.resolve('@binance/agentic-wallet');
@@ -295,7 +297,7 @@ function sanitizeBalances(payload) {
     binanceChainId: String(item.binanceChainId || ''),
     balance: String(item.balance || '0'),
     price: String(item.price || '0'),
-    value: String(item.value || '0'),
+    value: item.value == null || item.value === '' ? null : String(item.value),
   })).filter(item => item.symbol);
 }
 
@@ -330,6 +332,7 @@ function createWarriorServer(options = {}) {
     : config.aiDecisionMode === 'off' ? createOffDecisionProvider() : createMockDecisionProvider());
   const aiConnections = createAiConnections({ file: options.aiConnectionsFile ?? (options.walletCli ? undefined : path.join(ROOT, '.data', 'ai-connections.json')),
     fetchImpl: options.aiFetch, now: options.now, fallback: fallbackDecisionProvider });
+  const collection = createCardCollection({file:options.collectionFile ?? (options.walletCli ? undefined : path.join(ROOT,'.data','card-collection.json')),now:options.now});
   const decisionProvider = aiConnections.router;
   const predictionSource = options.predictionSource || (options.simulation ? createPredictionSource(walletCli) : createSimulationMarketSource({
     official: createPredictionSource(walletCli), walletStatus, run: walletCli,
@@ -529,10 +532,9 @@ function createWarriorServer(options = {}) {
     const txLock = lockResult.status === 'fulfilled'
       ? { status: String(lockResult.value?.data?.status || 'UNKNOWN').toUpperCase(), chainId: config.chainId }
       : null;
-    const accountValue = balances.reduce((total, item) => {
-      const value = Number(item.value);
-      return total + (Number.isFinite(value) ? value : 0);
-    }, 0);
+    const balancesAvailable = balancesResult.status === 'fulfilled' && Array.isArray(balancesResult.value?.data);
+    const accountValue = balancesAvailable && balances.every(item => item.value != null && Number.isFinite(Number(item.value)))
+      ? balances.reduce((total, item) => total + Number(item.value), 0) : null;
     const primaryAddress = addresses.find(item => item.binanceChainId === config.chainId) || addresses[0] || null;
     return {
       wallet: {
@@ -542,6 +544,7 @@ function createWarriorServer(options = {}) {
         addresses,
       },
       accountValue,
+      balancesAvailable,
       balances,
       settings,
       txLock,
@@ -679,6 +682,7 @@ function createWarriorServer(options = {}) {
       const body = await readJson(request);
       const prior = simulation.findCreation?.(body.requestId, body.name, body.config || {});
       if (prior) return sendJson(response, 200, prior);
+      collection.assertSelection(body.config||{});
       aiConnections.assertAgents(body.config?.agents);
       return sendJson(response, 201, simulation.create(body.name, body.config || {}, body.clientId || null, body.requestId));
     }
@@ -712,6 +716,16 @@ function createWarriorServer(options = {}) {
       if(typeof body.battleId!=='string'||typeof body.agentId!=='string')throw appError('Invalid target',400,'INVALID_TOP_UP_REQUEST');
       try{return sendJson(response,200,simulation.topUp(body.battleId,body.agentId,body.amount,body.requestId));}
       catch(cause){throw appError(cause.code||cause.message,cause.code==='STORAGE_ERROR'?503:409,cause.code||'TOP_UP_FAILED');}
+    }
+    if (request.method === 'GET' && url.pathname === '/api/cards/collection') return sendJson(response,200,collection.read());
+    if (request.method === 'POST' && url.pathname === '/api/cards/action') {
+      assertSameOrigin(request);
+      return sendJson(response,200,collection.transact(await readJson(request)));
+    }
+    if (request.method === 'POST' && url.pathname === '/api/simulation/global-controls') {
+      assertSameOrigin(request);
+      const body=await readJson(request);
+      return sendJson(response,200,simulation.setGlobalControls(body.controls,body.battleId,body.revision));
     }
     if (request.method === 'POST' && url.pathname === '/api/simulation/emotion') {
       assertSameOrigin(request);
@@ -1013,7 +1027,7 @@ function createWarriorServer(options = {}) {
         response.end('Forbidden');
         return;
       }
-      if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+      if (!clientAssetAllowed(relativePath) || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
         response.writeHead(404);
         response.end('Not found');
         return;

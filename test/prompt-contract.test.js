@@ -22,7 +22,7 @@ const skip=input=>({round_id:input.market.round_id,action:'SKIP',direction:null,
   ...(input.divination?{divination:{seed:input.divination.seed,reading:'Frozen draw interpretation',verdict:'WAIT'}}:{})});
 function external(raw){Object.defineProperty(raw,ai.DECISION_META,{value:{responseContract:'strategy-v2'}});return raw;}
 
-test('all seventeen strategies send distinct rules, current controls and exact audit bodies through the real router',async()=>{
+test('all nineteen strategies send distinct rules, current controls and exact audit bodies through the real router',async()=>{
   const wire=[],audit=[];
   const store=createAiConnections({now:()=>slot,fetchImpl:async(url,request)=>{
     const body=JSON.parse(request.body),input=JSON.parse(body.messages.at(-1).content);wire.push(body);
@@ -43,7 +43,7 @@ test('all seventeen strategies send distinct rules, current controls and exact a
       prompts.add(wire.at(-1).messages[0].content);
     }
   }
-  assert.equal(prompts.size,34);assert.ok(!JSON.stringify(audit).includes('NOT_A_REAL_KEY'));
+  assert.equal(prompts.size,38);assert.ok(!JSON.stringify(audit).includes('NOT_A_REAL_KEY'));
 });
 
 test('oracle names are resolved using game IDs and remain consistent after restoring a frozen draw',()=>{

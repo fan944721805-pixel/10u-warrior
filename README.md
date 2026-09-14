@@ -1,126 +1,105 @@
 # 10U 战神
 
-**给策略 10U 虚拟本金，看谁能成为战神。**
+**抽一张战神卡，用独立的模拟本金看策略表现。**
 
-一个手机与电脑都能用的策略模拟应用：选角色、开一局，看决策、收益曲线和战报。无需充值、钱包或 AI Key，即可使用本地规则开始体验。
+手机与电脑都能使用的策略模拟应用。抽卡收藏、选择人物开局，在战场查看下注、决策依据和资金变化，在战神榜比较最近一局、最近三局或全部记录。
 
-[**下载 Web / Android 试用版**](https://github.com/fan944721805-pixel/10u-warrior/releases/tag/v0.1.9-preview.1) · [最简试用说明](./TRY_ME.md) · [更新记录](./CHANGELOG.md)
+当前版本 **0.2.0** 使用新版卡片界面。下载 [Android 侧载包](https://github.com/fan944721805-pixel/10u-warrior/releases/download/v0.2.0-preview.1/10u-warrior-0.2.0-android-preview.apk) 或 [电脑 Web 包](https://github.com/fan944721805-pixel/10u-warrior/releases/download/v0.2.0-preview.1/10u-warrior-0.2.0-web.zip)，查看 [版本说明](https://github.com/fan944721805-pixel/10u-warrior/releases/tag/v0.2.0-preview.1)。APK 为 Release 构建、测试证书签名，供侧载试用；使用和升级步骤见 [TRY_ME.md](./TRY_ME.md)。
 
-- **17 种角色策略**：10U战神、超级AI、凉兮、守财奴……每局最多 8 位 Agent，各有独立模拟本金。
-- **看得见的决策与战绩**：多战局、逐轮结算、收益曲线、排行榜和决策记录。
-- **随时打开看看**：支持手机、平板、桌面及中英日韩四语言；Android 提供后台模拟和桌面小组件。
+- **19 位人物**，每局最多 8 位，各自拥有独立资金和冻结的卡片属性。
+- **本地规则或外部模型**，可选 OpenAI、Claude、DeepSeek 与兼容接口；没有 AI Key 也可使用本地规则。
+- **四种语言、三类屏幕**：中文、英文、日文、韩文；手机、平板和桌面。Android 支持后台运行与桌面小组件。
 
 ## 界面预览
 
-<table>
-  <tr>
-    <th width="72%">桌面版 · 战场总览</th>
-    <th width="28%">手机版 · 策略卡片</th>
-  </tr>
-  <tr>
-    <td valign="top"><img src="./docs/images/desktop.png" alt="10U 战神桌面战场：独立战局、模拟本金、轮次和三位策略角色" width="1040"></td>
-    <td valign="top"><img src="./docs/images/mobile.png" alt="10U 战神手机布局：策略卡片、模拟收益和底部导航" width="390"></td>
-  </tr>
-</table>
+<table><tr><th width="72%">桌面 · 战场</th><th width="28%">手机 · 人物战况</th></tr><tr><td valign="top"><img src="./docs/images/desktop.png" alt="新版桌面战场：第一局、四位人物、独立模拟资金及下注状态" width="1040"></td><td valign="top"><img src="./docs/images/mobile.png" alt="新版手机战场与人物资金卡片" width="390"></td></tr></table>
 
-<sub>实际页面截图，使用隔离的离线演示数据。桌面 1440px、手机 390px；手机版为浏览器响应式预览，不是真机截图。</sub>
+<sub>当前页面的浏览器截图，使用隔离服务账本与测试收藏；未接外部行情、钱包或模型。手机图为响应式浏览器预览，不是真机截图。</sub>
 
-## 开始试用
+## 本机开始
 
-- **安卓**：下载 APK → 安装 →「开一局」→ 选择策略 →「确认开局」。
-- **电脑**：下载 Web ZIP → 解压 → 安装 [Node.js 22+](https://nodejs.org) → Windows 双击 `start-web.cmd`，保留命令窗口。
-
-所有资金和收益均为模拟数据。当前下载版本为 **0.1.9 试用版**，APK 使用测试签名；Web 试用启动器关闭真实报价和交易。
-
-## 使用与开发目录
-
-<details>
-<summary><strong>01 · 功能与模拟规则</strong></summary>
-
-| 功能 | 支持内容 |
-| --- | --- |
-| 战局 | 选择角色、本金与轮次，独立账本，暂停、继续、结束和归档 |
-| 策略 | 17 种角色、26 项指标/数据选项，可选外部 AI 模型 |
-| 市场 | BTC / ETH / BNB，5 分钟 / 15 分钟 / 1 小时 / 1 天 |
-| 复盘 | 逐轮决策、模拟订单、收益曲线、排行榜与战报 |
-| Android | 本机运行、加密保存、后台服务、桌面策略小组件 |
-
-未连接钱包时，可用公开现货行情做虚拟对局；`?offline=1` 提供独立的本地演示。缺失真实行情时等待恢复，不用随机结果替代。外部 AI 是可选项，需自行配置，可能产生供应商费用。
-
-完整结算口径、模型配置和高级接口见 [技术参考](./docs/REFERENCE.md)；各版本变化见 [CHANGELOG](./CHANGELOG.md)。
-
-</details>
-
-<details>
-<summary><strong>02 · Web 本地运行</strong></summary>
-
-需要 Node.js 22 或以上。Windows 可直接双击 `start-web.cmd`；macOS / Linux 或源码运行：
+安装 [Node.js 22+](https://nodejs.org)，在项目目录执行：
 
 ```sh
 npm ci --omit=dev
 node start-web.cjs
 ```
 
-打开 [本机应用](http://127.0.0.1:5174)，或使用 [离线演示](http://127.0.0.1:5174/?offline=1)。首次安装依赖需要联网；按 `Ctrl+C` 停止服务。
+Windows 也可双击 `start-web.cmd`。打开 [本机应用](http://127.0.0.1:5174)，保留服务窗口；按 Ctrl+C 停止。
 
-个人数据存于本机 `.data/`，升级前保留旧目录与数据。服务面向本机单用户，不适合直接作为公网多人服务。
+首次进入没有示例对局和赠送卡。先抽卡，再在战场点击“开一局”，勾选人物并设置本金、币种与周期。10 U / 100 U 是快捷选项，本金可自行输入。抽取和刷新属性共用次数，耗尽后显示冷却。
+
+所有对局使用模拟资金。缺少行情时等待恢复，不编造报价或结算结果。钱包不是开局前提；右上角的钱包入口可授权 Binance Agentic Wallet 并查询资产。当前界面不提供真实下单。
+
+<details>
+<summary><strong>功能与数据边界</strong></summary>
+
+| 功能 | 当前行为 |
+| --- | --- |
+| 卡册 | 服务保存收藏、抽卡次数、重复卡替换及属性刷新；旧本地收藏保留备份后迁入 |
+| 对局 | BTC / ETH / BNB；5 分钟、15 分钟、1 小时、1 天；暂停、继续、结束及独立账本 |
+| 规则 | SC-2 本金约束、CT-1 词条状态、全局情绪与冷却；已提交下注保持原快照 |
+| 决策 | 本地规则或经过验证的模型连接；开局冻结模型连接版本与卡片规则 |
+| 战神榜 | 最近一局、最近三局、全部；下注次数、胜率、净收益与资金变化 |
+| 钱包 | 官方授权、会话恢复、资产和权限查询；会话密钥不进入浏览器存储 |
+| Android | 原生后台服务、加密持久化、通知暂停、桌面小组件 |
+
+Web 数据存于本机 `.data/`；Android 存于应用私有加密目录。升级前保留原数据，不要先卸载应用。每份数据目录只由一个服务进程写入，不支持多进程共享或跨设备账户同步。
+
+新版默认入口是 `index.html`，旧 `card-lab.html` 书签自动转入新版。旧 AI 页面、战报页面、阵容配置页面和随机离线演示不再作为产品入口；历史对局账本保留。静态文件不能代替本机服务，旧 `?offline=1` 参数被忽略，仍使用正式服务。
+
+外部 AI 需要自行配置，可能产生供应商费用。人物形象与策略为娱乐模拟，不代表本人、真实胜率或收益承诺。本项目并非 Binance 官方产品。
 
 </details>
 
 <details>
-<summary><strong>03 · Android 安装、后台与小组件</strong></summary>
+<summary><strong>Android、后台与小组件</strong></summary>
 
-需要 Android 7.0 或以上，以及可访问行情服务的网络。手机直接获取行情，可选直接调用已配置的 AI，无需电脑服务器；不连接钱包或提交真实交易。
+手机通过原生服务获取公开行情并调用已配置的模型，无需电脑常驻。设备设置入口位于页脚，支持电池优化、后台限制、通知权限和添加小组件；也可从系统小组件列表添加。
 
-- 后台模拟：按应用提示允许后台运行，通知栏可暂停新下注。
-- 桌面小组件：在「对局设置 → 桌面小组件」中添加，或从系统小组件列表添加。
-- 覆盖升级：同签名旧测试版可直接安装；不要先卸载，以免丢失数据。
-- 系统可能限制后台活动；进程重启后对局恢复为暂停，需手动继续。
+系统仍可能限制后台活动。进程重启后，对局恢复为暂停，需手动继续；已有订单继续按可用行情结算。小组件显示账本快照，点击进入对应人物详情，不自行下单。
 
-构建、签名和运行边界见 [Android 打包说明](./ANDROID_BUILD.md)。
+构建与签名说明见 [ANDROID_BUILD.md](./ANDROID_BUILD.md)，钱包协议及验证边界见 [原生钱包说明](./docs/mobile-agentic-wallet.md)。
 
 </details>
 
 <details>
-<summary><strong>04 · 开发、验证与技术文档</strong></summary>
-
-项目使用原生 HTML / CSS / JavaScript、Node.js 和 Capacitor。
+<summary><strong>开发与验证</strong></summary>
 
 ```sh
 npm ci
 npm run check
 npm test
+node scripts/verify-card-lab.cjs
+npm run android:sync
 ```
+
+浏览器验证需要 Chrome 和 Playwright，可用 `PLAYWRIGHT_PATH` 指向已有模块。`npm test` 会重建 Android 共用运行时与客户端资源。客户端资源清单在 `client-assets.cjs`，Android 输出目录为 `artifacts/mobile-web`，排除旧界面资源。
+
+`node scripts/capture-readme.cjs` 使用隔离服务重新生成本页截图，不读取个人钱包和账本。自动化与协议夹具验证不等于真实交易、外部模型调用或本版本真机验证。
 
 | 文档 | 内容 |
 | --- | --- |
-| [技术参考与历史验证](./docs/REFERENCE.md) | 模拟结算、AI 配置、账本、执行桥接、文件职责与历史证据 |
-| [UI 架构](./UI_ARCHITECTURE.md) | 页面模块、样式分层、角色与皮肤扩展 |
-| [Agent 接口说明](./AI_AGENT_USAGE.md) | 本机 API 调用与约束 |
-| [Android 构建](./ANDROID_BUILD.md) | 打包、签名、后台服务和小组件 |
-| [功能更新](./CHANGELOG.md) | 各版本功能与验证记录 |
+| [新版接入与迁移](./docs/strategy-system/12-production-migration.md) | 已实施项、证据、待完成项和发布状态 |
+| [0.2.0 交付核验](./docs/strategy-system/13-release-audit.md) | 功能、文案、构建及分发的证据清单 |
+| [策略系统规格](./docs/STRATEGY_SYSTEM_SPEC.md) | 卡片生成、词条、资金及人物规则 |
+| [技术参考](./docs/REFERENCE.md) | 模拟结算、接口与历史验证 |
+| [Android 构建](./ANDROID_BUILD.md) | 打包、签名及后台服务 |
+| [更新记录](./CHANGELOG.md) | 版本变化 |
 
-界面截图可通过 `node scripts/capture-readme.cjs` 重新生成，需要 Chrome 和 Playwright；可用 `PLAYWRIGHT_PATH` 指向已有模块。脚本使用全新离线演示账本，不读取个人账户。
-
-自动化测试与模拟对局不代表真实交易、真实外部 AI 或 Android 真机验证。不要提交 `.data/`、API Key、钱包会话或签名私钥。
+不要提交 `.data/`、API Key、钱包会话或签名私钥。
 
 </details>
 
 <details>
-<summary><strong>05 · English quick start</strong></summary>
+<summary><strong>English quick start</strong></summary>
 
-**Give each strategy 10 virtual USDT and watch the battle.**
+Draw a warrior card, choose up to eight characters and run a paper battle. The current interface supports 19 characters and Chinese, English, Japanese and Korean. Each battle uses an isolated ledger; rankings summarize recent and lifetime performance.
 
-10U Warrior is a local-first simulation with 17 character strategies, up to 8 Agents per battle, independent paper balances, decision history and performance reports. Chinese, English, Japanese and Korean are supported.
+Install Node.js 22+, run `npm ci --omit=dev`, then `node start-web.cjs`. Open http://127.0.0.1:5174. Draw your first card before starting a battle. Local rules require no AI key or wallet. Optional model connections and Binance wallet authorization use the existing local/native services. All battles use simulated funds; the current UI does not submit real trades.
 
-- **Android:** download the trial APK, install it, create a battle and confirm.
-- **Web:** install Node.js 22+, extract the ZIP and run `start-web.cmd` on Windows. On macOS/Linux, run `npm ci --omit=dev`, then `node start-web.cjs`.
-- No wallet, deposit or AI key is required to start. External AI is optional. Funds are simulated; the trial launcher disables live quotes and trading.
-
-Screenshots show the responsive browser UI with offline demo data. The Android APK uses a test certificate for sideload trials. See the [trial guide](./TRY_ME.md) for details.
+The new `index.html` is the single application entry. Old bookmarks redirect to it. Keep local data when upgrading; one service process owns each data directory. Android background execution remains subject to operating-system limits. Release status and verification limits are recorded in the migration document.
 
 </details>
 
----
-
-[MIT License](./LICENSE) · [第三方声明](./THIRD_PARTY_NOTICES.md) · 本项目并非 Binance 官方产品。
+[MIT License](./LICENSE) · [第三方声明](./THIRD_PARTY_NOTICES.md)

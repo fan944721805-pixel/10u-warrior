@@ -8,7 +8,7 @@ const calculate=(klines=rows(time),book=depth)=>calculateIndicatorSnapshot({symb
 const near=(actual,expected,tolerance=1e-8)=>assert.ok(Math.abs(actual-expected)<tolerance,`${actual} != ${expected}`);
 
 test('26 input groups share one catalog; analytic ramp checks extended formulas and units',()=>{
-  assert.equal(Object.keys(indicators).length,26);assert.equal(Object.keys(profiles).length,17);
+  assert.equal(Object.keys(indicators).length,26);assert.equal(Object.keys(profiles).length,19);
   const s=calculate();
   assert.equal(s.completedCandles,199);
   assert.ok(Object.values(s.availability).every(status=>status==='READY'));
@@ -22,7 +22,7 @@ test('26 input groups share one catalog; analytic ramp checks extended formulas 
   near(s.cci,9.5/(0.015*5));near(s.mfi,100);near(s.obv.change20,2000);
   near(s.vwap.value,289.5);near(s.vwap.distancePct,(299/289.5-1)*100);
   near(s.roc.tenMinutes,(299/289-1)*100);near(s.roc.twentyMinutes,(299/279-1)*100);near(s.momentum,10);
-  assert.deepEqual(s.donchian,{upper:299,lower:277,close:299,breakout:0});
+  assert.deepEqual(s.donchian,{upper:299,lower:277,close:299,breakout:0,previous:{upper:298,lower:276,close:298}});
   near(s.takerFlow.buyRatio,0.6);near(s.takerFlow.netBase,100);
   near(s.cmf,1/3);near(s.longReturns.sixtyMinutes,(299/239-1)*100);
   near(s.spread.microprice,(300.01*4+300)/5);

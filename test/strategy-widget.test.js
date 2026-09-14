@@ -22,6 +22,25 @@ test('settlement-pending and old decisions are never advertised as a new current
   b.agents[0].orders[1].status='LOST'; b.agents[0].lastDecision={action:'BET',direction:'UP'};
   assert.equal(project([b],{now:201}).rows[0].action,'观望');
 });
+test('expanded card uses ledger fields and separates current bets from older pending settlement', () => {
+  const b=fixture(), a=b.agents[0];
+  Object.assign(a,{reserved:5,wins:3,losses:1,winRate:.75});
+  a.orders=[{status:'OPEN',start:100,end:200,direction:'UP',amount:3,referencePrice:12345.67},
+    {status:'OPEN',start:0,end:100,direction:'DOWN',amount:2,referencePrice:999}];
+  const row=project([b],{now:150}).rows[0];
+  assert.equal(row.cashValue,'13.00 U');assert.equal(row.reservedValue,'5.00 U');
+  assert.equal(row.betValue,'3.00 U');assert.equal(row.previousValue,'2.00 U');
+  assert.equal(row.referenceValue,'12345.67 USDT');assert.equal(row.winValue,'75.00%');assert.equal(row.winRecord,'3/4');
+  const expired=project([b],{now:250}).rows[0];
+  assert.equal(expired.betValue,'—');assert.equal(expired.previousValue,'5.00 U');assert.equal(expired.referenceValue,'');
+  assert.equal(expired.action,'等待结算');
+});
+test('expanded card keeps unavailable numbers unknown and translates every added label', () => {
+  const b=fixture();delete b.agents[0].cash;
+  const row=project([b],{now:150,t:v=>messages[v]||v}).rows[0];
+  assert.equal(row.cashValue,'— U');assert.equal(row.reservedValue,'— U');assert.equal(row.winValue,'—');assert.equal(row.winRecord,'—');
+  for(const key of ['cashLabel','reservedLabel','previousLabel','referenceLabel','winLabel','detailLabel','roundLabel'])assert.ok(!/[\u3400-\u9fff]/u.test(row[key]),key);
+});
 test('paused, ended, unavailable and language changes do not change identity or financial state', () => {
   const b=fixture(); b.status='paused';
   const zh=project([b],{now:150});

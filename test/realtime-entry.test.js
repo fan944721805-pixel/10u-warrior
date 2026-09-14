@@ -38,7 +38,7 @@ test('signal-only polling makes no model calls or repeated audit writes without 
     const file=path.join(dir,'ledger.json'),f=fixture({file});await f.prepare();await f.at(0);
     const initial=fs.readFileSync(file,'utf8');
     for(let t=1000;t<=59000;t+=1000)await f.at(t);
-    assert.equal(f.calls.length,0);assert.equal(f.counts.indicators,12);
+    assert.equal(f.calls.length,0);assert.equal(f.counts.indicators,13);
     assert.equal(fs.readFileSync(file,'utf8'),initial);
     f.signal(true);await f.at(60000);
     const order=f.sim.snapshot().agents[0].orders[0];
@@ -47,7 +47,7 @@ test('signal-only polling makes no model calls or repeated audit writes without 
     assert.equal(order.intent.expiresAt,f.slot+70000);assert.equal(f.counts.detail,1);
     const reads=f.counts.indicators;
     for(let t=61000;t<270000;t+=1000)await f.at(t);
-    assert.equal(f.calls.length,1);assert.equal(f.counts.indicators,reads);
+    assert.equal(f.calls.filter(i=>i.market.round_id===String(f.slot)).length,1);assert.equal(f.counts.indicators,reads+1);
     assert.equal(f.sim.snapshot().agents[0].orders.length,1);
   } finally { fs.rmSync(dir,{recursive:true,force:true}); }
 });
@@ -128,9 +128,9 @@ test('later seats retry a signal after queue expiry instead of starving behind e
 
 test('all eight seats can enter on signals and share observation reads within a battle', async () => {
   const f=fixture({agentCount:8});await f.prepare();await f.at(0);
-  assert.equal(f.calls.length,0);assert.equal(f.counts.indicators,1);assert.equal(f.counts.books,2);
+  assert.equal(f.calls.length,0);assert.equal(f.counts.indicators,2);assert.equal(f.counts.books,4);
   f.signal(true);await f.at(60000);
-  assert.equal(f.calls.length,8);assert.equal(f.counts.indicators,2);
+  assert.equal(f.calls.length,8);assert.equal(f.counts.indicators,3);
   assert.ok(f.sim.snapshot().agents.every(a=>a.orders.length===1&&a.reconciliation.matched));
 });
 

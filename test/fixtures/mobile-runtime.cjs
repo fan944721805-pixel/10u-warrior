@@ -54,12 +54,12 @@ function fixture() {
   }
   return { now, requests, fetchImpl, setTime: value => { time=value; }, offline: value => { unavailable=value; }, aiFailure: value => { aiFailure=value; } };
 }
-function loadRuntime(storage, f) {
-  const context = vm.createContext({ crypto: crypto.webcrypto, TextEncoder, TextDecoder, URL, URLSearchParams, Headers, Response, AbortSignal,
+function loadRuntime(storage, f, ResponseClass = Response) {
+  const context = vm.createContext({ crypto: crypto.webcrypto, TextEncoder, TextDecoder, URL, URLSearchParams, Headers, Response: ResponseClass, AbortSignal,
     DOMException, CustomEvent, structuredClone, setTimeout, clearTimeout, setInterval, clearInterval,
     WarriorStorageNative: storage, Capacitor: { Plugins: { CapacitorHttp: { request: async args => {
       const response = await f.fetchImpl(args.url, { method: args.method, headers: args.headers, body: args.data == null ? undefined : JSON.stringify(args.data) });
-      return { status: response.status, data: await response.json() };
+      return { status: response.status, headers:Object.fromEntries(response.headers), data: await response.json() };
     } } } },
   });
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../../public/mobile-runtime.js'), 'utf8'), context);

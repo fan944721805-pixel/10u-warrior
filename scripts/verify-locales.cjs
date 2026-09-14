@@ -46,13 +46,13 @@ const {createWarriorServer}=require('../server');
         await layout(`${width}-${locale}-api`);
         await page.locator('#ai-settings-strategy-tab').click();
         await page.locator('#ai-editor-basic-tab').click();
-        await page.locator('#agent-name').fill('小明の전략');
+        // Strategy names now come from the catalog; the old free-name input no longer exists.
         for(const section of ['basic','policy','inputs']){
           await page.locator(`#ai-editor-${section}-tab`).click();
           await layout(`${width}-${locale}-${section}`);
         }
         assert.equal(await page.locator('.agent-indicator-grid input').count(),26);
-        assert.equal(await page.locator('[data-agent-strategy]').count(),12);
+        assert.equal(await page.locator('[data-agent-strategy]').count(),Object.keys(require('../public/strategy-catalog').profiles).length);
         await page.locator('.agent-prompt-box').evaluate(el=>el.open=true);
         const prompt=await page.locator('#agent-prompt').innerText();
         assert.ok(prompt.includes('paper betting only'));
@@ -84,6 +84,6 @@ const {createWarriorServer}=require('../server');
     await page.evaluate(()=>document.querySelector('#locale-fixture .dynamic').textContent='第 28 轮');
     await page.waitForFunction(()=>document.querySelector('#locale-fixture .dynamic').textContent==='第 28 ラウンド');
     assert.deepEqual(errors,[]);
-    console.log(`PASS: four locales, persisted reload, 12 catalog profiles, 26 inputs, prompt previews, dynamic round trips, custom text, 360/768/1440px. Isolated UI only. Screenshots: ${output}`);
+    console.log(`PASS: four locales, persisted reload, current catalog profiles, 26 inputs, prompt previews, dynamic round trips, custom text, 360/768/1440px. Isolated UI only. Screenshots: ${output}`);
   }finally{if(browser)await browser.close();await new Promise(resolve=>server.close(resolve))}
 })().catch(error=>{console.error(error);process.exitCode=1});

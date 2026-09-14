@@ -9,6 +9,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(BackgroundSettingsPlugin.class);
         registerPlugin(NativeRuntimePlugin.class);
         registerPlugin(StrategyWidgetPlugin.class);
+        registerPlugin(WalletLinkPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

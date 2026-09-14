@@ -1,84 +1,52 @@
 # UI 与模块边界
 
-这份文档只说明当前实现的职责边界。目标是让页面继续保持动漫紫色与荧光黄风格，同时避免任何一个脚本同时管理页面、数据、计时器和皮肤。
+当前产品只加载新版卡片界面，保留紫色、荧光黄与卡通人物品牌。四个页面为抽取战神、我的卡册、战场、战神榜；API、钱包、人物详情与设备设置使用弹窗。
 
-## 依赖方向
+## 入口与分发
 
-```text
-index.html
-  -> app-core.js
-  -> skin-registry.js + simulation-api.js
-  -> app.js + agent-setup.js + wallet.js + ai-api.js
-  -> i18n.js
-  -> paper.js
-  -> mobile-layout.js
+`public/index.html` 是唯一应用文档。`card-lab.html` 通过 `card-entry.js` 保留查询参数与锚点后跳转；旧 AI、战报链接进入战场，旧阵容链接进入卡册。
 
-paper.js -> simulation-api.js -> /api/simulation/*
-agent-setup.js -> skin-registry.js
-agent-setup.js -> simulation-api.js（只同步策略，不上传皮肤）
-```
+`client-assets.cjs` 定义客户端资源清单。Web 服务只响应清单内资源；Android 构建复制到 `artifacts/mobile-web`，Capacitor 从该目录同步。Android 额外保留独立 `runtime-host`、调度器和共用运行包。旧 app/paper/wallet 页面脚本、皮肤切换及随机离线演示不在分发清单内。旧源码与测试夹具仅用于历史回归，不能作为当前 UI 验收证据。
 
-上层可以调用下层；下层不反向读取页面业务。跨模块状态通过 `window.Warrior` 的事件和状态对象传递。
+## 模块职责
 
-## 前端模块
+| 文件 | 当前职责 |
+| --- | --- |
+| `public/card-lab.js` | 页面组合、开局草稿、模型设置、人物详情、语言与当前选择 |
+| `public/card-lab-data.js` | 19 位人物、基础属性、词条及展示定义；服务也使用相同定义 |
+| `public/card-lab-draws.js` | 收藏数据格式和兼容迁移；服务拥有抽取权威状态 |
+| `public/card-runtime.js` | Web 同源请求与 Android 原生请求适配，错误与超时 |
+| `public/card-collection.js` | 服务收藏、额度、重复卡处理、未确认请求恢复、旧本地卡备份导入 |
+| `public/card-battles.js` | 对局列表、创建、暂停、继续、结束、并发请求和选择恢复 |
+| `public/card-results.js` | 从正式账本汇总最近一局、最近三局、全部记录 |
+| `public/card-wallet.js` | 授权与查询 UI、会话状态、未知响应重查、可见时轮询 |
+| `public/card-device.js` | 原生权限、小组件添加确认、语言/人物投影同步和详情跳转 |
+| `public/strategy-widget.js` | 前后台共用账本投影；新版不运行旧 DOM 适配器 |
+| `public/price-stream.js` | 当前币种行情订阅；断开时不保留为实时价格 |
+| `public/i18n.js` | 新版中、英、日、韩文案；独立状态决定业务行为 |
+| `public/simulation-api.js`、`native-service-client.js` | 既有服务合同、原生通信和网络状态 |
 
-| 文件 | 唯一职责 | 不负责 |
-| --- | --- | --- |
-| `public/app-core.js` | 轻量事件总线与共享页面状态 | 请求接口、渲染业务 UI |
-| `public/simulation-api.js` | `/api/simulation/*` 请求、超时和错误统一处理 | 渲染、计时 |
-| `public/skin-registry.js` | 皮肤注册、校验、持久化和应用 | 生成图片、调用 AI |
-| `public/app.js` | 页面切换、基础弹窗和通用控件 | 服务端模拟轮询 |
-| `public/agent-setup.js` | Agent 增删改、策略设置、逐 Agent 皮肤选择 | 模拟账本、皮肤图片生成 |
-| `public/paper.js` | 当前战局、排行榜、订单战报的组合渲染 | 直接拼装网络请求、创建 Agent |
-| `public/mobile-layout.js` | 手机行情折叠区、人数位置；跨断点移动和还原已有节点 | 复制业务状态、额外轮询 |
-| `public/orb-arena.js` | 旧人物竞技场，当前页面不加载 | 当前战绩卡片 |
-| `public/character-mode.js` | 旧全体皮肤切换，当前页面不加载 | 当前逐 Agent 图标设置 |
-| `public/i18n.js` | 中英文词条和增量 DOM 翻译 | 根据翻译文本判断业务状态 |
-| `public/wallet.js` | 钱包连接与状态 UI | 对局模拟 |
-| `public/ai-api.js` | 浏览器本机 AI 连接实验室 | 自动对局决策 |
-| `public/leaderboard.js` | 旧演示榜单逻辑；当前主页面不加载 | 当前真实模拟排行榜 |
+Web 由 `server.js` 持有服务。Android 由 `SimulationService` 的独立 WebView 加载 `runtime-host`，后者启动编译自 `mobile/runtime.cjs` 的共用引擎。页面不创建第二份账本或第二个决策循环。
 
-## 样式分层
+收藏使用 COL-1 原子文档。开局冻结卡片、模型连接版本、CT-1 词条和 SC-2 资金规则；页面刷新或卡片属性重抽不能重写已创建对局。模拟账本、订单和额度来自服务，浏览器只保存偏好、草稿与幂等恢复记录。密钥和钱包会话不进入页面存储。
 
-| 层 | 文件 | 说明 |
-| --- | --- | --- |
-| 基础 | `style.css` | 布局、字体、通用控件 |
-| 主题 | `anime.css` | 紫色动漫主题与品牌表现 |
-| 功能 | `orb-arena.css`、`wallet.css`、`agent-ui.css`、`ai-api.css` 等 | 各自功能区域 |
-| 角色 | `ai-avatars.css`、`orb-skins.css`、`character-mode.css` | 内置角色资源与状态帧 |
-| 当前模拟 | `paper.css` | 规则 AI 模拟视图 |
-| 皮肤契约 | `skin-system.css` | 内置/生成皮肤统一显示 |
-| 最终响应式修正 | `ui-v2.css` | 平板底栏、移动端紧凑布局、战报卡片 |
-| 手机排版 | `mobile.css` | 760px 以下的控制栏、战绩卡片、浮动底栏与底部弹窗；最后加载 |
+## 样式与文案
 
-新增样式应优先进入对应功能文件；手机专用排版集中维护在 `mobile.css`，跨模块的桌面和平板修正进入 `ui-v2.css`。
+`card-lab.css` 提供基础布局，`card-lab-brand.css` 提供品牌、卡片、弹窗和响应式调整。保留主要按钮至少 48px 的触控区域；局数、币种与周期并排显示。卡片概览突出账面资金、可用/冻结资金及下注，决策和资金图放在详情。
 
-手机端将行情说明、时间和每局规则收进原生 `details`，决策引擎状态与错误提示保持直接可见。切到宽屏后原节点回到原位，事件和实时数据引用保持不变。已检查 320/375/393/430px 手机、768px 平板和 1123px 桌面的布局及中英文切换。
+新增文案同步四种语言。数字、状态与请求结果不能通过已翻译文字判断。模拟资金明确标识；加载失败、无数据和等待授权分别呈现，不用示例内容填充。人物图鉴中的“原型”指人物基础介绍，不代表产品是原型。
 
-## Agent 皮肤契约
+资金图实现与 `public/agent-equity.js` 共用；修改相关图表后执行 `node scripts/sync-card-chart.cjs`，避免两份实现偏离。
 
-内置皮肤 ID：`anime-female`、`warrior-male`。每个 Agent 在 `warrior-agent-config-v1` 中独立保存 `skinId`。皮肤数据不会发给模拟策略接口。
+## 验证
 
-未来 AI 图片生成完成后，只需要把结果注册到现有入口：
-
-```js
-window.Warrior.skins.registerGenerated({
-  id: 'generated-example-skin',
-  name: '用户命名皮肤',
-  imageUrl: 'data:image/webp;base64,...',
-  frame: { x: 50, y: 50, size: 120 },
-});
-```
-
-允许的图片地址为 `data:image/png|jpeg|webp|avif`、`blob:`、`http:` 或 `https:`。注册表只负责接收、校验、保存和显示，不负责提示词、额度、内容审核或生成任务。
-
-## 运行和验证
-
-```powershell
+```sh
 npm run check
 npm test
+npm run verify:ui
+npm run mobile:verify
 ```
 
-竞技场当前直接容纳 AI 战绩卡片，不再展示人物和特效；每位 Agent 的卡片图标与设置中的独立皮肤保留。
+`check` 检查服务、构建脚本及实际分发资源。`test` 重建运行包并检查业务合同。`verify:ui` 覆盖当前四页及弹窗、服务持久化、错误路径与四语言布局。`mobile:verify` 使用生产共用运行包和隔离原生桥验证钱包及设备入口；它不是真机证明。
 
-浏览器至少检查：桌面、768px 平板、393px 手机；中文和英文；Agent 单独换肤；战局切换、暂停、排行榜、战报、详情弹窗。自动化和浏览器检查只证明本地 UI 与模拟流程，不代表真实交易或真实 AI 图片生成。
+迁移证据与发布状态见 [迁移记录](./docs/strategy-system/12-production-migration.md)。旧结构仅保留在 [历史文档](./docs/archive/UI_ARCHITECTURE.md)。

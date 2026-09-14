@@ -1048,6 +1048,10 @@
       previous.replaceChildren(node('span','往期待结算'),node('strong',number(pending.previousAmount)+' U','',true));
       previous.title='已到期，等待市场结算结果';
       card.querySelector('.agent-state').textContent = order ? '待结算' : data.recovery ? statusLabels[data.status] : terminal(data) ? statusLabels[data.status] : !data.enabled ? '已暂停' : agent.lastStatus === 'WATCHING' ? '等待信号' : agent.lastStatus === 'SKIPPED' && currentDecision ? '本轮跳过' : '等待节点';
+      let preparation=card.querySelector('.agent-preparation');
+      if(!preparation){preparation=node('div','','agent-preparation');card.querySelector('.agent-round-top').after(preparation);}
+      preparation.hidden=!agent.preparation || !['calculating','ready','failed'].includes(agent.preparation.status);
+      preparation.textContent=agent.preparation?.status==='ready'?'下一轮策略已就绪':agent.preparation?.status==='failed'?'提前计算未完成，开局重试':'下一轮提前计算中';
       card.querySelector('.agent-win').replaceChildren(node('span', '胜率'), node('b', ' ' + (agent.winRate == null ? '—' : number(agent.winRate * 100) + '%'), '', true), node('small', ' ' + agent.wins + '/' + (agent.wins + agent.losses), '', true));
       window.WarriorDefeat.updateCard(card, data, agent);
     });

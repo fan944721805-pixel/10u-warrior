@@ -38,6 +38,8 @@
   ];
   const indicators = Object.fromEntries(definitions.map(([key,zh,en,field,snapshotKey]) => [key,{key,zh,en,field,snapshotKey}]));
   const profiles = {
+    kzgMask:{label:'KZG 口罩哥',enLabel:'KZG Mask Bro',description:'先确认趋势和区间突破，再等量能与主动流确认；信号冲突就观望。',enDescription:'Confirm trend and a closed-candle range break, then require volume and flow support. Wait on conflicting evidence.',actionUrge:35,emotionSensitivity:25,emotionLabel:'亏损后更耐心等待确认',enEmotionLabel:'Waits more patiently for confirmation after losses.',emotion:{winStake:.08,lossStake:-.15,winConfidence:0,lossConfidence:.8},variance:20,minConfidence:72,baseStakePct:8,maxStakePct:20,required:['ema','adx','longReturns','candles','donchian','volume','takerFlow','orderbook','atr','spread','odds']},
+    sunBrother:{label:'孙哥 · 反指',enLabel:'Sun Bro · Inverse',description:'黄毛薄肌，指标反着来。明确技术信号看涨则看空，看跌则看涨；信号冲突、缺失或风险过高时观望。人物娱乐设定。',enDescription:'Blond and lean. Invert a clear technical consensus: bullish signals permit DOWN, bearish signals permit UP. Conflicting, missing or unsafe inputs require waiting. Fictional persona.',actionUrge:55,emotionSensitivity:35,emotionLabel:'反指不等于盲目追损',enEmotionLabel:'Inversion never permits blind loss chasing.',emotion:{winStake:.05,lossStake:-.1,winConfidence:0,lossConfidence:.5},variance:40,minConfidence:74,baseStakePct:10,maxStakePct:25,required:['ema','macd','rsi','adx','volume','atr','longReturns','spread','odds']},
     liangXi:{label:'凉兮',enLabel:'Liang Xi',description:'盯短线拐点，多空都敢做；选点挑剔，开仓后容易上头连着押。只下半仓或全仓。人物风格模拟，不代表本人或真实胜率。',enDescription:'Hunt short-term turns in either direction. Selective before entry, but prone to repeated bets after getting involved. Stake only half or all of the available paper balance. A persona simulation, not the real person or a verified win rate.',actionUrge:40,emotionSensitivity:95,emotionLabel:'赢了想滚仓，输了急翻本',enEmotionLabel:'Wants to roll winnings and rushes to win losses back.',emotion:{winStake:0,lossStake:0,winConfidence:-6,lossConfidence:-8},variance:35,minConfidence:84,baseStakePct:50,normalMaxStakePct:50,maxStakePct:100,allowAllIn:true,allInConfidence:90,fixedStakeChoices:[50,100],required:smartIndicators,recommended:smartIndicators},
     fengShui:{label:'风水师',enLabel:'Feng Shui Master',description:'卦象定方向，卦象相持就看五行；有行情信号呼应就敢试小注，强烈逆风才静观。娱乐模拟，不代表预测能力。',enDescription:'Follow the oracle direction, using the drawn element to break a symbol tie. Try a small stake with some market support; wait against strong opposing evidence. Entertainment simulation, not predictive power.',actionUrge:50,emotionSensitivity:25,emotionLabel:'连败宜静，不追损',enEmotionLabel:'Seek stillness after losses; never chase.',emotion:{winStake:.03,lossStake:-.15,winConfidence:0,lossConfidence:.8},variance:40,minConfidence:70,baseStakePct:5,maxStakePct:10,required:['priceChange','rsi','ema','orderbook','atr','spread','longReturns','odds']},
     diviner:{label:'占卜师',enLabel:'Diviner',description:'三张牌定偏向，有行情支持就小注尝试；手痒高时，中立牌面可参考行情试探，每轮不重抽。娱乐模拟。',enDescription:'Use the three-card tilt with market support for small bets. At high action urge, a neutral draw may consult market direction for a small probe. Never redraw within a round. Entertainment simulation.',actionUrge:55,emotionSensitivity:40,emotionLabel:'连败收牌，降低下注',enEmotionLabel:'Put the cards away and reduce stakes after losses.',emotion:{winStake:.05,lossStake:-.18,winConfidence:0,lossConfidence:1},variance:55,minConfidence:70,baseStakePct:5,maxStakePct:10,required:['priceChange','rsi','ema','orderbook','atr','spread','longReturns','odds']},
@@ -59,6 +61,8 @@
   // Each personality gets its own confidence ruler and three-step betting ladder.
   // This deliberately keeps the last mile from flattening distinct entry rules.
   const decisionShapes = {
+    kzgMask:{confidence:{base:49,scoreWeight:5.8,varianceWeight:.02},stakeTiers:[8,14,20],tierConfidence:[78,88],personalitySwing:1.5},
+    sunBrother:{confidence:{base:49,scoreWeight:5.7,varianceWeight:.02},stakeTiers:[10,15,25],tierConfidence:[80,90],personalitySwing:2},
     liangXi:{confidence:{base:48,scoreWeight:5.5,varianceWeight:.015},stakeTiers:[50,50,50],tierConfidence:[80,90],personalitySwing:1},
     fengShui:{confidence:{base:49,scoreWeight:5.3,varianceWeight:.02},stakeTiers:[10,10,10],tierConfidence:[70,82],personalitySwing:1.5},
     diviner:{confidence:{base:48,scoreWeight:5.4,varianceWeight:.04},stakeTiers:[10,10,10],tierConfidence:[71,83],personalitySwing:2.5},
@@ -96,7 +100,7 @@
   }));
 
   const coreStrategies = ['aggressive','smart','conservative','liangXi'];
-  const characterStrategies = ['czBrother','contrarian','showoff','firstLady'];
+  const characterStrategies = ['czBrother','contrarian','showoff','firstLady','kzgMask','sunBrother'];
   const decisionStage = strategy => strategy === 'contrarian' ? 2 : strategy === 'showoff' ? 1 : 0;
   const supportsAsset = (strategy, coin) => !['czBrother','firstLady'].includes(strategy) || ['BTC','BNB'].includes(String(coin).replace(/USDT$/, ''));
   function peerPerformance(history, current, investedCapital) {
@@ -179,6 +183,27 @@
     if(!supportsAsset(strategy,context.asset))return wait('BTC_BNB_ONLY');
     if(profile.required.filter(k=>k!=='odds').some(k=>!complete(snapshot[indicators[k].snapshotKey])))return wait('MISSING_INPUT');
     if(snapshot.spread.basisPoints>8||snapshot.atr.percent>1.2)return wait('MARKET_RISK');
+    if(strategy==='sunBrother'){
+      const sign=v=>v>0?1:v<0?-1:0, e=snapshot.ema, a=snapshot.adx;
+      const votes=[sign(e.ema5-e.ema20),sign(snapshot.macd.histogram),sign(a.plusDI-a.minusDI),snapshot.rsi14>54?1:snapshot.rsi14<46?-1:0,sign(snapshot.longReturns.fifteenMinutes),sign(snapshot.longReturns.sixtyMinutes)];
+      const up=votes.filter(v=>v>0).length,down=votes.filter(v=>v<0).length;
+      if(a.adx<20||snapshot.volumeRatio<1||snapshot.atr.percent>.8||Math.max(up,down)<4||Math.min(up,down)>0)return wait('TECHNICAL_CONSENSUS_UNCLEAR');
+      const score=(up>down?-1:1)*(Math.max(up,down)===6?6:5.2);
+      return {score,factors:[{name:'inverse_technical_consensus',value:JSON.stringify({up,down,technicalDirection:up>down?'UP':'DOWN'}),impact:score>0?'UP':'DOWN'}],regime:'inverse-technical'};
+    }
+    if(strategy==='kzgMask'){
+      const style=context.styleId||'original', d=snapshot.donchian, e=snapshot.ema, a=snapshot.adx;
+      const adxMin=style==='sniper'?25:style==='wild'?18:20,volumeMin=style==='sniper'?1.3:style==='wild'?1:1.1;
+      const direct=d.close>d.upper?1:d.close<d.lower?-1:0;
+      const previous=d.previous;
+      const confirmed=previous&&previous.close>previous.upper&&d.close>previous.upper?1:previous&&previous.close<previous.lower&&d.close<previous.lower?-1:0;
+      const side=style==='sniper'?confirmed:direct||confirmed;
+      if(!side||a.adx<adxMin||snapshot.volumeRatio<volumeMin||snapshot.atr.percent>.8)return wait('WAIT_FOR_STRUCTURE_CONFIRMATION');
+      const long=longHorizonContext(snapshot);
+      if(Math.sign(e.ema5-e.ema20)!==side||Math.sign(a.plusDI-a.minusDI)!==side||long.opposition(side)===2||(style==='trend'&&long.support(side)<2))return wait('STRUCTURE_TREND_CONFLICT');
+      if(Math.sign(snapshot.takerFlow.buyRatio-.5)!==side&&Math.sign(snapshot.spotOrderBookImbalance)!==side)return wait('STRUCTURE_FLOW_MISSING');
+      return {score:side*(confirmed?6:5.2),factors:[{name:'confirmed_range_break',value:JSON.stringify({style,side,confirmed:Boolean(confirmed),upper:d.upper,lower:d.lower,close:d.close}),impact:side>0?'UP':'DOWN'}],regime:'structure-confirmation'};
+    }
     if(strategy==='czBrother'||strategy==='firstLady'){
       const bold=strategy==='firstLady',urge=clamp(Number(actionUrge??profile.actionUrge),0,100)/100;
       const long=longHorizonContext(snapshot),p=snapshot.priceChangePct,e=snapshot.ema,a=snapshot.adx;
@@ -423,12 +448,20 @@
     const marginalWeight=1-distance/7;
     return (stableUnit({version:1,strategy,agentId:String(agentId),roundId:String(roundId)})*2-1)*profile.personalitySwing*willingness*marginalWeight;
   }
-  function emotionAdjustment({strategy,actionUrge,emotionSensitivity,battleEmotion=0,winStreak=0,lossStreak=0}={}) {
-    const profile=profiles[strategy]||profiles.smart,urge=bounded(actionUrge,profile.actionUrge,0,100),sensitivity=bounded(emotionSensitivity,profile.emotionSensitivity,0,100),intensity=sensitivity/100;
-    const globalEmotion=bounded(battleEmotion,0,0,100),globalIntensity=globalEmotion/100;
+  function emotionAdjustment({strategy,actionUrge,emotionSensitivity,battleEmotion=0,winStreak=0,lossStreak=0,cardEmotion=false}={}) {
+    const bound=cardEmotion?((value,fallback,min,max)=>Number.isFinite(Number(value))?clamp(Number(value),min,max):fallback):bounded;
+    const profile=profiles[strategy]||profiles.smart,urge=bound(actionUrge,profile.actionUrge,0,100),sensitivity=bound(emotionSensitivity,profile.emotionSensitivity,0,100),intensity=sensitivity/100;
+    const globalEmotion=bound(battleEmotion,0,0,100),globalIntensity=globalEmotion/100;
     const wins=clamp(Math.floor(Number(winStreak)||0),0,4),losses=clamp(Math.floor(Number(lossStreak)||0),0,4),state=losses?'loss':wins?'win':'neutral',streak=state==='loss'?losses:state==='win'?wins:0;
     const stakeRate=state==='loss'?profile.emotion.lossStake:state==='win'?profile.emotion.winStake:0;
     const confidenceRate=state==='loss'?profile.emotion.lossConfidence:state==='win'?profile.emotion.winConfidence:0;
+    if(cardEmotion){
+      // Sensitivity has already been applied once at settlement. Tilt influences
+      // each persona's legal willingness, never its evidence or direction.
+      const personalityStakeMultiplier=clamp(1+stakeRate*globalIntensity,.35,2.5);
+      const minimumConfidence=clamp(profile.minConfidence-urge*.08+confidenceRate*globalIntensity,50,99);
+      return {state,streak,actionUrge:urge,sensitivity,battleEmotion:globalEmotion,personalityStakeMultiplier,globalStakeMultiplier:1,stakeMultiplier:personalityStakeMultiplier,minimumConfidence};
+    }
     const personalityStakeMultiplier=clamp(1+stakeRate*streak*intensity,.35,2.5);
     // Arena tilt is deliberately a strong shared influence: at 100, a two-round
     // streak should be clearly visible even for cautious personalities. Hard
@@ -450,7 +483,7 @@
     const stakeMultiplier=!recovery&&cautious?(ratio>=2?.7:ratio>=1.5?.8:1):1;
     return {recoveryActive:recovery,stakeMultiplier,mode:recovery?'RECOVERY_ALL_IN':stakeMultiplier<1?'PROFIT_PROTECTION':'NORMAL',capitalRatio:ratio,recoveryTarget:initialBalance};
   }
-  function normalStakePercent({strategy,baseStakePct,maxStakePct,balance,initialBalance,openStake=0,recoveryActive=false,countertradeMultiplier=1,confidence=0,edge=0,winStreak=0,lossStreak=0,emotionSensitivity,battleEmotion=0}) {
+  function normalStakePercent({strategy,baseStakePct,maxStakePct,balance,initialBalance,openStake=0,recoveryActive=false,countertradeMultiplier=1,confidence=0,edge=0,winStreak=0,lossStreak=0,emotionSensitivity,battleEmotion=0,cardEmotion=false}) {
     const capital=capitalManagement({strategy,balance,initialBalance,openStake,recoveryActive});
     if(capital.recoveryActive)return 100;
     if(strategy==='liangXi')return Number(maxStakePct)<50?0:50;
@@ -459,7 +492,7 @@
     const tiers=profile.stakeTiers.map(value=>value/profile.baseStakePct*configuredBase);
     const measuredConfidence=Number.isFinite(Number(confidence))?Number(confidence):0;
     let percent=measuredConfidence>=profile.tierConfidence[1]?tiers[2]:measuredConfidence>=profile.tierConfidence[0]?tiers[1]:tiers[0];
-    percent*=emotionAdjustment({strategy,emotionSensitivity,battleEmotion,winStreak,lossStreak}).stakeMultiplier;
+    percent*=emotionAdjustment({strategy,emotionSensitivity,battleEmotion,winStreak,lossStreak,cardEmotion}).stakeMultiplier;
     if (Number(battleEmotion)>0) percent=Math.max(percent,probeStakePercent({strategy,baseStakePct,maxStakePct,balance,battleEmotion}));
     if (Number.isFinite(balance) && balance > 0) percent=Math.max(percent,MIN_STAKE*100/balance);
     if (strategy==='contrarian') percent*=clamp(Number(countertradeMultiplier)||1,1,2);
@@ -514,6 +547,7 @@
     const suppliedEmotionStreak = bounded(value.emotionStreak ?? value.emotion_streak, 0, 0, 4);
     const calculatedEmotion = emotionAdjustment({
       strategy,
+      cardEmotion:value.card_emotion===true,
       actionUrge,
       emotionSensitivity,
       battleEmotion,
@@ -556,7 +590,9 @@
         'After a settled win or loss, the supplied emotion threshold falls sharply, making subsequent rounds easier to enter. Reassess direction on fresh evidence every round and switch sides when justified. Repeated entries mean subsequent eligible rounds, never duplicate bets in one round. Missing data, conflicting direction and nonpositive edge still require SKIP.',
       ]:[]),
       ...(characterStrategies.includes(strategy)?['Fictional game persona, never claim to be or represent the real person.',
-        ['czBrother','firstLady'].includes(strategy)
+        strategy==='sunBrother' ? 'Use the program-verified inverse technical consensus. A bullish technical consensus permits only DOWN; bearish permits only UP. Unclear or conflicting consensus requires SKIP. Do not use peers or reverse the reversed direction again.'
+          : strategy==='kzgMask' ? 'Follow the frozen card style and program-verified structure confirmation: trend, closed-candle range break, volume and flow must agree. Sniper style needs a second closed-candle confirmation. Never invent missing bars or use peer orders.'
+          : ['czBrother','firstLady'].includes(strategy)
           ? 'BET only UP on BTCUSDT or BNBUSDT. Evaluate your own trend and liquidity conditions. You do not require any peer order or any peer loss streak.'
           : strategy==='showoff'
             ? 'Use only actual same-round czBrother orders in input.peers. Fade their stake-weighted direction; ties or no valid target require SKIP. No peer loss streak is required.'
@@ -569,14 +605,14 @@
         'Return divination with seed copied exactly from input.divination.seed, reading containing a short in-character interpretation (max 160 chars), and verdict equal to UP/DOWN for BET or WAIT for SKIP. Include ENTERTAINMENT_ONLY in warnings.',
       ]:[]),
       `Action urge: personal_action_urge=${personalActionUrge}/100; battle_action_urge=${battleActionUrge}/100; effective action_urge=${actionUrge}/100. The shared battle value raises every Agent toward 100 without erasing its personal baseline. A higher effective value may accept a weaker but still directional strategy signal and lowers the supplied minimum-confidence threshold by up to 8 points. It never creates a direction, overrides missing or stale data, accepts excessive market risk, removes the positive-edge check, or exceeds stake caps. SKIP remains a normal valid action in every round.`,
-      `Emotion rule: ${profile.enEmotionLabel} emotion_sensitivity=${emotionSensitivity}/100. battle_emotion=${battleEmotion}/100 applies from the first round: even without past results it raises the normal stake multiplier by up to 60% and lowers the confidence floor by up to 2.5 points. Win/loss streaks amplify this shared tilt, including for cautious strategies. It may change only the supplied minimum-confidence threshold and normal stake multiplier; it must never change direction, bypass market entry conditions, or exceed a hard stake cap.`,
+      value.card_emotion===true?'Emotion is already computed from unique settlements, card sensitivity, gain and completed-round cooling. Use the supplied personality multiplier and minimum confidence without amplifying sensitivity or streaks again. Cautious personalities can reduce stakes after losses.':`Emotion rule: ${profile.enEmotionLabel} emotion_sensitivity=${emotionSensitivity}/100. battle_emotion=${battleEmotion}/100 applies from the first round: even without past results it raises the normal stake multiplier by up to 60% and lowers the confidence floor by up to 2.5 points. Win/loss streaks amplify this shared tilt, including for cautious strategies. It may change only the supplied minimum-confidence threshold and normal stake multiplier; it must never change direction, bypass market entry conditions, or exceed a hard stake cap.`,
       `Current emotion adjustment: state=${calculatedEmotion.state}; streak=${calculatedEmotion.streak}; personality_stake_multiplier=${calculatedEmotion.personalityStakeMultiplier.toFixed(3)}; shared_tilt_multiplier=${calculatedEmotion.globalStakeMultiplier.toFixed(3)}; normal_stake_multiplier=${emotionStakeMultiplier.toFixed(3)}; effective_minimum_confidence=${effectiveMinimumConfidence.toFixed(2)}. Follow these supplied values exactly.`,
-      `Probe sizing follows this personality's battle_emotion curve: the ordinary 5% budget rises linearly to ${highProbe}% at 100, subject to normal_stake_cap and max_stake_pct, with a ${MIN_STAKE} USDT minimum only when those hard caps and balance allow it. Normal stake sizing is at least this personality's current probe budget when permitted by hard caps. The supplied execution permissions and exact stake choices are authoritative.`,
+      value.capital_version==='SC-2'?'SC-2 probes use only the lowest permitted personality tier. No minimum rounding-up, recovery exception, arbitrary fractions or additional exposure. If no supplied legal choice fits, SKIP.':`Probe sizing follows this personality's battle_emotion curve: the ordinary 5% budget rises linearly to ${highProbe}% at 100, subject to normal_stake_cap and max_stake_pct, with a ${value.capital_version==='SC-2'?.1:MIN_STAKE} USDT minimum only when those hard caps and balance allow it. Normal stake sizing is at least this personality's current probe budget when permitted by hard caps. The supplied execution permissions and exact stake choices are authoritative.`,
       ...(battleEmotion>=70 ? ['High-tilt decision preference: when a direction is permitted and your honest confidence clears the supplied minimum and positive-edge checks, prefer acting with the supplied normal or probe stake. A permitted probe does not need strong-signal consensus. Do not default to the minimum amount or wait for perfect alignment merely out of generic caution. SKIP remains valid for a specific uncertainty or unmet condition; explain it. Never inflate confidence or override a fixed direction, countertrade prerequisite, frozen oracle, or hard cap.'] : []),
       `Selected indicator fields: ${selectedFields.join(', ')}.`,
       `Required indicator fields: ${requiredFields.length ? requiredFields.join(', ') : 'none beyond the selected fields'}.`,
       `Policy limits: decision_variance=${variance}; personal_action_urge=${personalActionUrge}; battle_action_urge=${battleActionUrge}; action_urge=${actionUrge}; emotion_sensitivity=${emotionSensitivity}; battle_emotion=${battleEmotion}; minimum_confidence=${profile.minConfidence}; effective_minimum_confidence=${effectiveMinimumConfidence.toFixed(2)}; base_stake_pct=${profile.baseStakePct}; normal_stake_cap=${recovery?100:Math.min(profile.normalMaxStakePct,maxStakePct)}; max_stake_pct=${maxStakePct}; allow_all_in=${allowAllIn}.`,
-      `Normal stake ladder for this personality: ${profile.stakeTiers[0]}% below ${profile.tierConfidence[0]} confidence; ${profile.stakeTiers[1]}% from ${profile.tierConfidence[0]} to below ${profile.tierConfidence[1]}; ${profile.stakeTiers[2]}% from ${profile.tierConfidence[1]} upward. Apply the supplied emotion multiplier and a minimum stake of ${MIN_STAKE} USDT, then obey normal_stake_cap and max_stake_pct. For Contrarian, also apply the program-supplied collective countertrade stake multiplier before the hard caps; never invent a multiplier. If the balance or either cap cannot cover the minimum, SKIP. Do not substitute another personality's ladder.`,
+      value.capital_version==='SC-2'?`Legal normal stake tiers: ${strategy==='liangXi'?'50':profile.stakeTiers.join(', ')} percent. Confidence and the supplied emotion multiplier choose a tier, rounded down to an eligible tier, never to a new fraction. Never increase a stake to reach the 0.10 USDT minimum. The exact choices and pending exposure cap are authoritative.`:`Normal stake ladder for this personality: ${profile.stakeTiers[0]}% below ${profile.tierConfidence[0]} confidence; ${profile.stakeTiers[1]}% from ${profile.tierConfidence[0]} to below ${profile.tierConfidence[1]}; ${profile.stakeTiers[2]}% from ${profile.tierConfidence[1]} upward. Apply the supplied emotion multiplier and a minimum stake of ${MIN_STAKE} USDT, then obey normal_stake_cap and max_stake_pct. For Contrarian, also apply the program-supplied collective countertrade stake multiplier before the hard caps; never invent a multiplier. If the balance or either cap cannot cover the minimum, SKIP. Do not substitute another personality's ladder.`,
       ...(strategy==='priceAction' ? [
         'raw_candles contains the latest 20 fully closed OHLC bars. Read only open, high, low, close, candle order and the supplied market odds. Do not infer or use RSI, MACD, moving averages, order book, volume, news or any hidden indicator.',
         'Look for visible engulfing candles, rejection wicks, two-candle runs, forceful candle bodies and breaks of recent highs or lows. One clear strong pattern can be enough; do not require several confirmations. Weak shapes or strong opposing patterns require SKIP.',
@@ -586,7 +622,7 @@
       ]),
       'Follow only the selected strategy rule. Never substitute another strategy when its prerequisites fail. Related indicators are correlated, not independent confirmations. The local execution permissions supplied with an independent model review are authoritative: they may admit a small probe at high action urge. Preserve long-only, countertrade, and frozen-oracle contracts.',
       'confidence is your uncalibrated estimate of the chosen direction probability in percent; it is not a measured win rate. Estimated edge = confidence / 100 * odds - 1, before fees.',
-      'Shared capital sizing: at or below 20% of cumulative invested capital, enter persistent RECOVERY_ALL_IN until funds recover to invested capital. Unsettled stakes are part of funds. For conservative and volatilityGuard, at 1.5x invested capital reduce the usual stake percentage by 20%, at 2x reduce it by 30%; minimum stake and caps still apply. Runtime capital mode and exact stake choices override the static amount ladder only; they never change directional prerequisites.',
+      value.capital_version==='SC-2'?'SC-2 strict capital rules: minimum 0.10 USDT; round down to cents. The frozen user limit and personality limit both apply, as does the total unsettled exposure cap. Never bypass them for recovery. A triggered stop-loss blocks all new bets. Use only supplied exact stake choices.':'Shared capital sizing: at or below 20% of cumulative invested capital, enter persistent RECOVERY_ALL_IN until funds recover to invested capital. Unsettled stakes are part of funds. For conservative and volatilityGuard, at 1.5x invested capital reduce the usual stake percentage by 20%, at 2x reduce it by 30%; minimum stake and caps still apply. Runtime capital mode and exact stake choices override the static amount ladder only; they never change directional prerequisites.',
       allInRule,
       'decision_variance affects willingness to change a marginal decision. action_urge affects how much valid directional evidence is needed to act. Neither can bypass freshness, balance, positive edge, hard risk checks or stake caps. Losses alone are never evidence of an advantage.',
       'Use JSON numbers, not strings, booleans or null, for stake_usdt, stake_pct and confidence. SKIP requires direction=null, both stakes=0 and risk_mode=WAIT. Echo round_id as a string.',

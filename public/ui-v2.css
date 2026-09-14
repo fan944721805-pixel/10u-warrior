@@ -1044,3 +1044,4 @@ body[data-rule-ai="true"] .bottom-nav [data-page="leaderboard"] {
 .simulation-repair-panel button, .storage-recovery-dialog button { min-height: 48px; white-space: normal; }
 .storage-recovery-dialog { max-width: min(440px, calc(100vw - 32px)); }
 .storage-recovery-dialog button { margin: 6px; }
+.agent-preparation { margin-top:6px; font-size:12px; line-height:1.5; color:#7c499d; overflow-wrap:anywhere; }

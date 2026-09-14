@@ -4,6 +4,44 @@
     return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
   };
 
+  // global-controls.cjs
+  var require_global_controls = __commonJS({
+    "global-controls.cjs"(exports, module) {
+      var DEFAULTS = Object.freeze({ urge: 0, tilt: 0, gain: 100, cooling: "normal", variance: 0 });
+      var clamp = (value) => Math.max(0, Math.min(100, value));
+      var fail = (code) => Object.assign(Error(code), { code, statusCode: 400 });
+      function normalize(value) {
+        if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some((key) => !Object.hasOwn(DEFAULTS, key))) throw fail("INVALID_GLOBAL_CONTROLS");
+        for (const key of ["urge", "tilt", "gain", "variance"]) if (!Number.isInteger(value[key]) || value[key] < 0 || value[key] > (key === "gain" ? 200 : 100)) throw fail("INVALID_GLOBAL_CONTROLS");
+        if (!["slow", "normal", "fast"].includes(value.cooling)) throw fail("INVALID_GLOBAL_CONTROLS");
+        return Object.fromEntries(Object.keys(DEFAULTS).map((key) => [key, value[key]]));
+      }
+      function fromConfig(config) {
+        return normalize(config.globalControls ?? { ...DEFAULTS, urge: config.actionUrgeLevel ?? 0, tilt: config.emotionLevel ?? 0 });
+      }
+      function effective(personal, global) {
+        return clamp(personal) + (100 - clamp(personal)) * clamp(global) / 100;
+      }
+      function restoreEmotion(value, completedRounds = []) {
+        if (value == null) return { tilt: 0, lastCooledRound: completedRounds.length ? Math.max(...completedRounds) : null };
+        if (!Number.isFinite(value.tilt) || value.tilt < 0 || value.tilt > 100 || value.lastCooledRound !== null && !Number.isFinite(value.lastCooledRound)) throw fail("INVALID_SIM_LEDGER");
+        return { tilt: value.tilt, lastCooledRound: value.lastCooledRound };
+      }
+      function settleEmotion(state, status, sensitivity, controls) {
+        const increment = ({ WON: 8, LOST: 12 }[status] || 0) * clamp(sensitivity) / 100 * controls.gain / 100;
+        state.tilt = clamp(state.tilt + increment);
+      }
+      function coolEmotion(state, completedRounds, controls) {
+        const fresh = completedRounds.filter((slot) => state.lastCooledRound === null || slot > state.lastCooledRound);
+        if (!fresh.length) return false;
+        state.tilt = clamp(state.tilt - fresh.length * { slow: 3, normal: 6, fast: 12 }[controls.cooling]);
+        state.lastCooledRound = Math.max(...fresh);
+        return true;
+      }
+      module.exports = { DEFAULTS, normalize, fromConfig, effective, restoreEmotion, settleEmotion, coolEmotion };
+    }
+  });
+
   // mobile/fs.cjs
   var require_fs = __commonJS({
     "mobile/fs.cjs"(exports, module) {
@@ -1121,54 +1159,117 @@
     }
   });
 
-  // round-direction.js
-  var require_round_direction = __commonJS({
-    "round-direction.js"(exports, module) {
-      function roundContext(market, indicators, slot, durationSeconds, observedAt) {
-        const rows = indicators?.raw?.klines;
-        const opening = Array.isArray(rows) ? rows.find((row) => Array.isArray(row) && Number(row[0]) === Number(slot)) : null;
-        const official = market?.variantData?.startPrice;
-        const startPrice = Number(official ?? opening?.[1]);
-        const observedPrice = Number(indicators?.spread?.mid ?? indicators?.price);
-        const remaining = Number(slot) + durationSeconds * 1e3 - observedAt;
-        if (!Number.isFinite(startPrice) || startPrice <= 0 || !Number.isFinite(observedPrice) || observedPrice <= 0 || !Number.isFinite(observedAt) || remaining <= 0 || remaining > durationSeconds * 1e3) return null;
-        const closed = (Array.isArray(rows) ? rows : []).filter((row) => Array.isArray(row) && Number(row[0]) <= observedAt && Number(row[6]) < observedAt).slice(-21);
-        if (closed.some((row, i) => Number(row[6]) !== Number(row[0]) + 59999 || i && Number(row[0]) - Number(closed[i - 1][0]) !== 6e4)) return null;
-        const returns = closed.slice(1).map((row, i) => Math.log(Number(row[4]) / Number(closed[i][4])) * 100);
-        if (returns.length < 10 || returns.some((value) => !Number.isFinite(value))) return null;
-        const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
-        const noise = Math.sqrt(returns.reduce((sum, value) => sum + (value - mean) ** 2, 0) / returns.length);
+  // card-traits.cjs
+  var require_card_traits = __commonJS({
+    "card-traits.cjs"(exports, module) {
+      var VERSION = "CT-1";
+      var durations = { snowball: 2, stubborn: 2, retreat: 3, insight: 2, cooldown: 2, resonance: 1 };
+      var cooling = { insight: 5, cooldown: 5, resonance: 3 };
+      var fail = () => {
+        throw Object.assign(Error("INVALID_CARD_TRAIT_STATE"), { code: "INVALID_CARD_TRAIT_STATE" });
+      };
+      var integer = (n) => Number.isSafeInteger(n) && n >= 0;
+      var object = (o) => o && typeof o === "object" && !Array.isArray(o);
+      function restore(value) {
+        if (value == null) return { version: VERSION, serial: 0, settlements: [], wins: 0, losses: 0, waits: 0, protected: false, active: {}, cooling: {}, rounds: {}, completedThrough: null };
+        const s = structuredClone(value);
+        if (s.version !== VERSION || !["serial", "wins", "losses", "waits"].every((k) => integer(s[k])) || s.waits > 3 || typeof s.protected !== "boolean" || !Array.isArray(s.settlements) || s.settlements.some((id) => typeof id !== "string") || new Set(s.settlements).size !== s.settlements.length || s.completedThrough !== null && !integer(s.completedThrough)) fail();
+        for (const [field, limits] of [["active", durations], ["cooling", cooling]]) {
+          if (!object(s[field])) fail();
+          for (const [id, item] of Object.entries(s[field])) if (!limits[id] || !object(item) || !integer(item.remaining) || item.remaining < 1 || item.remaining > limits[id] || !integer(item.serial) || item.serial > s.serial) fail();
+        }
+        if (!object(s.rounds)) fail();
+        for (const [slot, r] of Object.entries(s.rounds)) {
+          if (!integer(Number(slot)) || s.completedThrough !== null && Number(slot) <= s.completedThrough || !object(r) || !["wait", "bet", "paused"].includes(r.outcome)) fail();
+          for (const key of ["active", "cooling"]) if (!Array.isArray(r[key]) || r[key].some((n) => !integer(n) || n > s.serial)) fail();
+        }
+        return s;
+      }
+      function activate(s, id) {
+        if (s.active[id] || s.cooling[id]) return false;
+        s.active[id] = { remaining: durations[id], serial: ++s.serial };
+        return true;
+      }
+      function end(s, id) {
+        if (!s.active[id]) return;
+        delete s.active[id];
+        if (cooling[id]) s.cooling[id] = { remaining: cooling[id], serial: ++s.serial };
+      }
+      function protect(s, netEquity, initial) {
+        if (netEquity >= initial * 1.5) s.protected = true;
+        else if (netEquity < initial * 1.3) s.protected = false;
+      }
+      function settle(s, traits, { id, status, netProfit, netEquity, initial }) {
+        if (typeof id !== "string" || !id || !["WON", "LOST", "SPLIT"].includes(status) || ![netProfit, netEquity, initial].every(Number.isFinite) || initial <= 0) fail();
+        if (s.settlements.includes(id)) return false;
+        s.settlements.push(id);
+        protect(s, netEquity, initial);
+        const win = status === "WON" && netProfit > 0, loss = status === "LOST" && netProfit < 0;
+        s.wins = win ? s.wins + 1 : 0;
+        s.losses = loss ? s.losses + 1 : 0;
+        if (netProfit < 0) end(s, "snowball");
+        if (netProfit > 0) {
+          end(s, "stubborn");
+          end(s, "retreat");
+        }
+        const has = (id2) => traits.includes(id2);
+        if (has("snowball") && s.wins >= 2) activate(s, "snowball");
+        if (has("stubborn") && s.losses >= 2) activate(s, "stubborn");
+        if (has("retreat") && s.losses >= 2) activate(s, "retreat");
+        if (has("insight") && s.wins >= 3) activate(s, "insight");
+        if (has("cooldown") && netProfit >= initial * 0.1 - 1e-8) activate(s, "cooldown");
+        return true;
+      }
+      function mark(s, traits, slot, outcome, { resonant = false } = {}) {
+        if (!integer(slot) || !["wait", "bet", "paused"].includes(outcome)) fail();
+        if (s.completedThrough !== null && slot <= s.completedThrough) return false;
+        if (resonant && traits.includes("resonance")) activate(s, "resonance");
+        const before = JSON.stringify(s), r = s.rounds[slot] || { outcome, active: [], cooling: [] };
+        if (outcome === "bet" || r.outcome !== "bet" && outcome === "paused") r.outcome = outcome;
+        for (const key of ["active", "cooling"]) r[key] = [.../* @__PURE__ */ new Set([...r[key], ...Object.values(s[key]).map((x) => x.serial)])];
+        s.rounds[slot] = r;
+        if (outcome === "bet") s.waits = 0;
+        return before !== JSON.stringify(s);
+      }
+      function complete(s, slots) {
+        let changed = false;
+        for (const slot of [...new Set(slots)].sort((a, b) => a - b)) {
+          if (!integer(slot)) fail();
+          const r = s.rounds[slot];
+          if (!r) continue;
+          for (const [id, item] of Object.entries(s.cooling)) if (r.cooling.includes(item.serial) && !--item.remaining) delete s.cooling[id];
+          for (const [id, item] of Object.entries(s.active)) if (r.active.includes(item.serial) && !--item.remaining) end(s, id);
+          if (r.outcome === "wait") s.waits = Math.min(3, s.waits + 1);
+          else if (r.outcome === "bet") s.waits = 0;
+          delete s.rounds[slot];
+          s.completedThrough = slot;
+          changed = true;
+        }
+        return changed;
+      }
+      function effects(s, traits, { netEquity, initial, resonant = false } = {}) {
+        const has = (id) => traits.includes(id), active = (id) => has(id) && Boolean(s?.active[id]);
+        const protectedNow = Number.isFinite(netEquity) && initial > 0 && (netEquity >= initial * 1.5 || s?.protected && netEquity >= initial * 1.3);
         return {
-          start_price: startPrice,
-          observed_price: observedPrice,
-          displacement_pct: (observedPrice / startPrice - 1) * 100,
-          noise_pct_per_minute: noise,
-          observed_at: observedAt,
-          round_id: String(slot),
-          opening_price_basis: official != null ? "official-market" : "spot-open-proxy",
-          observed_price_basis: "spot-proxy",
-          version: 1
+          version: VERSION,
+          paused: active("cooldown"),
+          urgeBonus: (active("stubborn") ? 10 : 0) + (active("insight") ? 10 : 0) + (has("waitFatigue") ? (s?.waits || 0) * 5 : 0),
+          stakeBonus: (active("snowball") ? 15 : 0) + (active("insight") ? 15 : 0),
+          stakeMultiplier: active("retreat") || has("protect") && protectedNow ? 0.7 : 1,
+          nextTier: has("resonance") && resonant && !s?.cooling.resonance,
+          active: traits.filter((id) => active(id) || id === "protect" && protectedNow),
+          remaining: Object.fromEntries(Object.entries(s?.active || {}).map(([id, v]) => [id, v.remaining])),
+          cooling: Object.fromEntries(Object.entries(s?.cooling || {}).map(([id, v]) => [id, v.remaining]))
         };
       }
-      function alignRoundDirection(signal, input) {
-        const context = input.market.round_context, duration = input.market.round_duration_seconds, remaining = input.market.seconds_to_close;
-        const technical = ["aggressive", "smart", "conservative", "trendFollowing", "meanReversion", "breakout", "orderFlow", "volatilityGuard", "consensus", "priceAction"];
-        if (!technical.includes(input.policy.strategy) || !signal?.score || !context || context.round_id !== input.market.round_id || ![duration, remaining, context.displacement_pct, context.noise_pct_per_minute, context.observed_at].every(Number.isFinite) || duration <= 0 || remaining <= 0 || remaining > duration || context.noise_pct_per_minute <= 0 || input.market.data_timestamp - context.observed_at > 1e4 || context.observed_at - input.market.data_timestamp > 1e4) return signal;
-        const elapsed = 1 - remaining / duration;
-        const uncertainty = context.noise_pct_per_minute * Math.sqrt(Math.max(remaining / 60, 0.5));
-        const distance = context.displacement_pct / Math.max(uncertainty, 5e-3);
-        const up = 1 / input.market.up_odds, down = 1 / input.market.down_odds;
-        const marketUp = up / (up + down), target = Math.sign(distance);
-        const confirms = Number.isFinite(marketUp) && (target > 0 ? marketUp >= 0.55 : marketUp <= 0.45);
-        const corrected = elapsed >= 0.2 && Math.abs(distance) >= 1 && confirms && target !== Math.sign(signal.score);
-        return {
-          ...signal,
-          score: corrected ? target * Math.abs(signal.score) : signal.score,
-          factors: [...signal.factors, { name: "round_target", value: JSON.stringify({ distance: Number(distance.toFixed(3)), elapsed: Number(elapsed.toFixed(3)), basis: context.opening_price_basis, corrected }), impact: target > 0 ? "UP" : target < 0 ? "DOWN" : "NEUTRAL" }],
-          ...corrected ? { directionCorrection: { version: 1, from: signal.score > 0 ? "UP" : "DOWN", to: target > 0 ? "UP" : "DOWN", distance, elapsed, basis: context.opening_price_basis } } : {}
-        };
+      function strongResonance(snapshot, strategy) {
+        if (strategy !== "kzgMask") return false;
+        const { ema: e, adx: a, donchian: d, takerFlow: f, longReturns: l } = snapshot || {};
+        if (!e || !a || !d?.previous || !f || !l) return false;
+        const side = d.close > d.upper && d.previous.close > d.previous.upper ? 1 : d.close < d.lower && d.previous.close < d.previous.lower ? -1 : 0;
+        return Boolean(side && a.adx >= 25 && snapshot.volumeRatio >= 1.3 && snapshot.atr?.percent <= 0.8 && Math.sign(e.ema5 - e.ema20) === side && Math.sign(a.plusDI - a.minusDI) === side && l.fifteenMinutes * side > 0 && l.sixtyMinutes * side > 0 && (f.buyRatio - 0.5) * side >= 0.1 && snapshot.spotOrderBookImbalance * side >= 0.15);
       }
-      module.exports = { roundContext, alignRoundDirection };
+      module.exports = { VERSION, restore, settle, mark, complete, effects, strongResonance };
     }
   });
 
@@ -1215,6 +1316,8 @@
         ];
         const indicators = Object.fromEntries(definitions.map(([key, zh, en, field, snapshotKey]) => [key, { key, zh, en, field, snapshotKey }]));
         const profiles = {
+          kzgMask: { label: "KZG \u53E3\u7F69\u54E5", enLabel: "KZG Mask Bro", description: "\u5148\u786E\u8BA4\u8D8B\u52BF\u548C\u533A\u95F4\u7A81\u7834\uFF0C\u518D\u7B49\u91CF\u80FD\u4E0E\u4E3B\u52A8\u6D41\u786E\u8BA4\uFF1B\u4FE1\u53F7\u51B2\u7A81\u5C31\u89C2\u671B\u3002", enDescription: "Confirm trend and a closed-candle range break, then require volume and flow support. Wait on conflicting evidence.", actionUrge: 35, emotionSensitivity: 25, emotionLabel: "\u4E8F\u635F\u540E\u66F4\u8010\u5FC3\u7B49\u5F85\u786E\u8BA4", enEmotionLabel: "Waits more patiently for confirmation after losses.", emotion: { winStake: 0.08, lossStake: -0.15, winConfidence: 0, lossConfidence: 0.8 }, variance: 20, minConfidence: 72, baseStakePct: 8, maxStakePct: 20, required: ["ema", "adx", "longReturns", "candles", "donchian", "volume", "takerFlow", "orderbook", "atr", "spread", "odds"] },
+          sunBrother: { label: "\u5B59\u54E5 \xB7 \u53CD\u6307", enLabel: "Sun Bro \xB7 Inverse", description: "\u9EC4\u6BDB\u8584\u808C\uFF0C\u6307\u6807\u53CD\u7740\u6765\u3002\u660E\u786E\u6280\u672F\u4FE1\u53F7\u770B\u6DA8\u5219\u770B\u7A7A\uFF0C\u770B\u8DCC\u5219\u770B\u6DA8\uFF1B\u4FE1\u53F7\u51B2\u7A81\u3001\u7F3A\u5931\u6216\u98CE\u9669\u8FC7\u9AD8\u65F6\u89C2\u671B\u3002\u4EBA\u7269\u5A31\u4E50\u8BBE\u5B9A\u3002", enDescription: "Blond and lean. Invert a clear technical consensus: bullish signals permit DOWN, bearish signals permit UP. Conflicting, missing or unsafe inputs require waiting. Fictional persona.", actionUrge: 55, emotionSensitivity: 35, emotionLabel: "\u53CD\u6307\u4E0D\u7B49\u4E8E\u76F2\u76EE\u8FFD\u635F", enEmotionLabel: "Inversion never permits blind loss chasing.", emotion: { winStake: 0.05, lossStake: -0.1, winConfidence: 0, lossConfidence: 0.5 }, variance: 40, minConfidence: 74, baseStakePct: 10, maxStakePct: 25, required: ["ema", "macd", "rsi", "adx", "volume", "atr", "longReturns", "spread", "odds"] },
           liangXi: { label: "\u51C9\u516E", enLabel: "Liang Xi", description: "\u76EF\u77ED\u7EBF\u62D0\u70B9\uFF0C\u591A\u7A7A\u90FD\u6562\u505A\uFF1B\u9009\u70B9\u6311\u5254\uFF0C\u5F00\u4ED3\u540E\u5BB9\u6613\u4E0A\u5934\u8FDE\u7740\u62BC\u3002\u53EA\u4E0B\u534A\u4ED3\u6216\u5168\u4ED3\u3002\u4EBA\u7269\u98CE\u683C\u6A21\u62DF\uFF0C\u4E0D\u4EE3\u8868\u672C\u4EBA\u6216\u771F\u5B9E\u80DC\u7387\u3002", enDescription: "Hunt short-term turns in either direction. Selective before entry, but prone to repeated bets after getting involved. Stake only half or all of the available paper balance. A persona simulation, not the real person or a verified win rate.", actionUrge: 40, emotionSensitivity: 95, emotionLabel: "\u8D62\u4E86\u60F3\u6EDA\u4ED3\uFF0C\u8F93\u4E86\u6025\u7FFB\u672C", enEmotionLabel: "Wants to roll winnings and rushes to win losses back.", emotion: { winStake: 0, lossStake: 0, winConfidence: -6, lossConfidence: -8 }, variance: 35, minConfidence: 84, baseStakePct: 50, normalMaxStakePct: 50, maxStakePct: 100, allowAllIn: true, allInConfidence: 90, fixedStakeChoices: [50, 100], required: smartIndicators, recommended: smartIndicators },
           fengShui: { label: "\u98CE\u6C34\u5E08", enLabel: "Feng Shui Master", description: "\u5366\u8C61\u5B9A\u65B9\u5411\uFF0C\u5366\u8C61\u76F8\u6301\u5C31\u770B\u4E94\u884C\uFF1B\u6709\u884C\u60C5\u4FE1\u53F7\u547C\u5E94\u5C31\u6562\u8BD5\u5C0F\u6CE8\uFF0C\u5F3A\u70C8\u9006\u98CE\u624D\u9759\u89C2\u3002\u5A31\u4E50\u6A21\u62DF\uFF0C\u4E0D\u4EE3\u8868\u9884\u6D4B\u80FD\u529B\u3002", enDescription: "Follow the oracle direction, using the drawn element to break a symbol tie. Try a small stake with some market support; wait against strong opposing evidence. Entertainment simulation, not predictive power.", actionUrge: 50, emotionSensitivity: 25, emotionLabel: "\u8FDE\u8D25\u5B9C\u9759\uFF0C\u4E0D\u8FFD\u635F", enEmotionLabel: "Seek stillness after losses; never chase.", emotion: { winStake: 0.03, lossStake: -0.15, winConfidence: 0, lossConfidence: 0.8 }, variance: 40, minConfidence: 70, baseStakePct: 5, maxStakePct: 10, required: ["priceChange", "rsi", "ema", "orderbook", "atr", "spread", "longReturns", "odds"] },
           diviner: { label: "\u5360\u535C\u5E08", enLabel: "Diviner", description: "\u4E09\u5F20\u724C\u5B9A\u504F\u5411\uFF0C\u6709\u884C\u60C5\u652F\u6301\u5C31\u5C0F\u6CE8\u5C1D\u8BD5\uFF1B\u624B\u75D2\u9AD8\u65F6\uFF0C\u4E2D\u7ACB\u724C\u9762\u53EF\u53C2\u8003\u884C\u60C5\u8BD5\u63A2\uFF0C\u6BCF\u8F6E\u4E0D\u91CD\u62BD\u3002\u5A31\u4E50\u6A21\u62DF\u3002", enDescription: "Use the three-card tilt with market support for small bets. At high action urge, a neutral draw may consult market direction for a small probe. Never redraw within a round. Entertainment simulation.", actionUrge: 55, emotionSensitivity: 40, emotionLabel: "\u8FDE\u8D25\u6536\u724C\uFF0C\u964D\u4F4E\u4E0B\u6CE8", enEmotionLabel: "Put the cards away and reduce stakes after losses.", emotion: { winStake: 0.05, lossStake: -0.18, winConfidence: 0, lossConfidence: 1 }, variance: 55, minConfidence: 70, baseStakePct: 5, maxStakePct: 10, required: ["priceChange", "rsi", "ema", "orderbook", "atr", "spread", "longReturns", "odds"] },
@@ -1234,6 +1337,8 @@
           firstLady: { label: "\u4E00\u59D0", enLabel: "First Lady", description: "\u6CBF\u7528 CZ\u5927\u8868\u54E5\u7684\u8D8B\u52BF\u4E0E\u6D41\u52A8\u6027\u6846\u67B6\uFF0C\u4F46\u66F4\u679C\u65AD\u3001\u66F4\u6FC0\u8FDB\uFF1B\u53EA\u505A\u591A BTC \u548C BNB\u3002", enDescription: "Uses CZ Big Bro\u2019s trend and liquidity framework with a bolder, more aggressive temperament; long-only BTC and BNB.", actionUrge: 78, emotionSensitivity: 55, emotionLabel: "\u786E\u8BA4\u8D8B\u52BF\u540E\u66F4\u6562\u8FFD\u51FB", enEmotionLabel: "Presses harder once the trend is confirmed.", emotion: { winStake: 0.3, lossStake: -0.05, winConfidence: -0.4, lossConfidence: 0.3 }, variance: 55, minConfidence: 68, baseStakePct: 12, maxStakePct: 30, required: ["atr", "spread", "priceChange", "ema", "macd", "adx", "volume", "orderbook", "longReturns", "odds"] }
         };
         const decisionShapes = {
+          kzgMask: { confidence: { base: 49, scoreWeight: 5.8, varianceWeight: 0.02 }, stakeTiers: [8, 14, 20], tierConfidence: [78, 88], personalitySwing: 1.5 },
+          sunBrother: { confidence: { base: 49, scoreWeight: 5.7, varianceWeight: 0.02 }, stakeTiers: [10, 15, 25], tierConfidence: [80, 90], personalitySwing: 2 },
           liangXi: { confidence: { base: 48, scoreWeight: 5.5, varianceWeight: 0.015 }, stakeTiers: [50, 50, 50], tierConfidence: [80, 90], personalitySwing: 1 },
           fengShui: { confidence: { base: 49, scoreWeight: 5.3, varianceWeight: 0.02 }, stakeTiers: [10, 10, 10], tierConfidence: [70, 82], personalitySwing: 1.5 },
           diviner: { confidence: { base: 48, scoreWeight: 5.4, varianceWeight: 0.04 }, stakeTiers: [10, 10, 10], tierConfidence: [71, 83], personalitySwing: 2.5 },
@@ -1269,7 +1374,7 @@
           personalitySwing: decisionShapes[key]?.personalitySwing ?? decisionShapes.smart.personalitySwing
         }));
         const coreStrategies = ["aggressive", "smart", "conservative", "liangXi"];
-        const characterStrategies = ["czBrother", "contrarian", "showoff", "firstLady"];
+        const characterStrategies = ["czBrother", "contrarian", "showoff", "firstLady", "kzgMask", "sunBrother"];
         const decisionStage = (strategy) => strategy === "contrarian" ? 2 : strategy === "showoff" ? 1 : 0;
         const supportsAsset = (strategy, coin) => !["czBrother", "firstLady"].includes(strategy) || ["BTC", "BNB"].includes(String(coin).replace(/USDT$/, ""));
         function peerPerformance(history, current, investedCapital) {
@@ -1391,6 +1496,27 @@
           if (!supportsAsset(strategy, context.asset)) return wait("BTC_BNB_ONLY");
           if (profile.required.filter((k) => k !== "odds").some((k) => !complete(snapshot[indicators[k].snapshotKey]))) return wait("MISSING_INPUT");
           if (snapshot.spread.basisPoints > 8 || snapshot.atr.percent > 1.2) return wait("MARKET_RISK");
+          if (strategy === "sunBrother") {
+            const sign2 = (v) => v > 0 ? 1 : v < 0 ? -1 : 0, e = snapshot.ema, a = snapshot.adx;
+            const votes = [sign2(e.ema5 - e.ema20), sign2(snapshot.macd.histogram), sign2(a.plusDI - a.minusDI), snapshot.rsi14 > 54 ? 1 : snapshot.rsi14 < 46 ? -1 : 0, sign2(snapshot.longReturns.fifteenMinutes), sign2(snapshot.longReturns.sixtyMinutes)];
+            const up2 = votes.filter((v) => v > 0).length, down2 = votes.filter((v) => v < 0).length;
+            if (a.adx < 20 || snapshot.volumeRatio < 1 || snapshot.atr.percent > 0.8 || Math.max(up2, down2) < 4 || Math.min(up2, down2) > 0) return wait("TECHNICAL_CONSENSUS_UNCLEAR");
+            const score = (up2 > down2 ? -1 : 1) * (Math.max(up2, down2) === 6 ? 6 : 5.2);
+            return { score, factors: [{ name: "inverse_technical_consensus", value: JSON.stringify({ up: up2, down: down2, technicalDirection: up2 > down2 ? "UP" : "DOWN" }), impact: score > 0 ? "UP" : "DOWN" }], regime: "inverse-technical" };
+          }
+          if (strategy === "kzgMask") {
+            const style = context.styleId || "original", d = snapshot.donchian, e = snapshot.ema, a = snapshot.adx;
+            const adxMin = style === "sniper" ? 25 : style === "wild" ? 18 : 20, volumeMin = style === "sniper" ? 1.3 : style === "wild" ? 1 : 1.1;
+            const direct = d.close > d.upper ? 1 : d.close < d.lower ? -1 : 0;
+            const previous = d.previous;
+            const confirmed = previous && previous.close > previous.upper && d.close > previous.upper ? 1 : previous && previous.close < previous.lower && d.close < previous.lower ? -1 : 0;
+            const side = style === "sniper" ? confirmed : direct || confirmed;
+            if (!side || a.adx < adxMin || snapshot.volumeRatio < volumeMin || snapshot.atr.percent > 0.8) return wait("WAIT_FOR_STRUCTURE_CONFIRMATION");
+            const long = longHorizonContext(snapshot);
+            if (Math.sign(e.ema5 - e.ema20) !== side || Math.sign(a.plusDI - a.minusDI) !== side || long.opposition(side) === 2 || style === "trend" && long.support(side) < 2) return wait("STRUCTURE_TREND_CONFLICT");
+            if (Math.sign(snapshot.takerFlow.buyRatio - 0.5) !== side && Math.sign(snapshot.spotOrderBookImbalance) !== side) return wait("STRUCTURE_FLOW_MISSING");
+            return { score: side * (confirmed ? 6 : 5.2), factors: [{ name: "confirmed_range_break", value: JSON.stringify({ style, side, confirmed: Boolean(confirmed), upper: d.upper, lower: d.lower, close: d.close }), impact: side > 0 ? "UP" : "DOWN" }], regime: "structure-confirmation" };
+          }
           if (strategy === "czBrother" || strategy === "firstLady") {
             const bold = strategy === "firstLady", urge = clamp(Number(actionUrge ?? profile.actionUrge), 0, 100) / 100;
             const long = longHorizonContext(snapshot), p = snapshot.priceChangePct, e = snapshot.ema, a = snapshot.adx;
@@ -1643,12 +1769,18 @@
           const marginalWeight = 1 - distance / 7;
           return (stableUnit({ version: 1, strategy, agentId: String(agentId), roundId: String(roundId) }) * 2 - 1) * profile.personalitySwing * willingness * marginalWeight;
         }
-        function emotionAdjustment({ strategy, actionUrge, emotionSensitivity, battleEmotion = 0, winStreak = 0, lossStreak = 0 } = {}) {
-          const profile = profiles[strategy] || profiles.smart, urge = bounded(actionUrge, profile.actionUrge, 0, 100), sensitivity = bounded(emotionSensitivity, profile.emotionSensitivity, 0, 100), intensity = sensitivity / 100;
-          const globalEmotion = bounded(battleEmotion, 0, 0, 100), globalIntensity = globalEmotion / 100;
+        function emotionAdjustment({ strategy, actionUrge, emotionSensitivity, battleEmotion = 0, winStreak = 0, lossStreak = 0, cardEmotion = false } = {}) {
+          const bound = cardEmotion ? ((value, fallback, min, max) => Number.isFinite(Number(value)) ? clamp(Number(value), min, max) : fallback) : bounded;
+          const profile = profiles[strategy] || profiles.smart, urge = bound(actionUrge, profile.actionUrge, 0, 100), sensitivity = bound(emotionSensitivity, profile.emotionSensitivity, 0, 100), intensity = sensitivity / 100;
+          const globalEmotion = bound(battleEmotion, 0, 0, 100), globalIntensity = globalEmotion / 100;
           const wins = clamp(Math.floor(Number(winStreak) || 0), 0, 4), losses = clamp(Math.floor(Number(lossStreak) || 0), 0, 4), state = losses ? "loss" : wins ? "win" : "neutral", streak = state === "loss" ? losses : state === "win" ? wins : 0;
           const stakeRate = state === "loss" ? profile.emotion.lossStake : state === "win" ? profile.emotion.winStake : 0;
           const confidenceRate = state === "loss" ? profile.emotion.lossConfidence : state === "win" ? profile.emotion.winConfidence : 0;
+          if (cardEmotion) {
+            const personalityStakeMultiplier2 = clamp(1 + stakeRate * globalIntensity, 0.35, 2.5);
+            const minimumConfidence2 = clamp(profile.minConfidence - urge * 0.08 + confidenceRate * globalIntensity, 50, 99);
+            return { state, streak, actionUrge: urge, sensitivity, battleEmotion: globalEmotion, personalityStakeMultiplier: personalityStakeMultiplier2, globalStakeMultiplier: 1, stakeMultiplier: personalityStakeMultiplier2, minimumConfidence: minimumConfidence2 };
+          }
           const personalityStakeMultiplier = clamp(1 + stakeRate * streak * intensity, 0.35, 2.5);
           const globalStakeRate = state === "loss" ? 0.8 : 0.6;
           const tiltPeriods = Math.max(1, streak);
@@ -1667,7 +1799,7 @@
           const stakeMultiplier = !recovery && cautious ? ratio >= 2 ? 0.7 : ratio >= 1.5 ? 0.8 : 1 : 1;
           return { recoveryActive: recovery, stakeMultiplier, mode: recovery ? "RECOVERY_ALL_IN" : stakeMultiplier < 1 ? "PROFIT_PROTECTION" : "NORMAL", capitalRatio: ratio, recoveryTarget: initialBalance };
         }
-        function normalStakePercent({ strategy, baseStakePct, maxStakePct, balance, initialBalance, openStake = 0, recoveryActive = false, countertradeMultiplier = 1, confidence = 0, edge = 0, winStreak = 0, lossStreak = 0, emotionSensitivity, battleEmotion = 0 }) {
+        function normalStakePercent({ strategy, baseStakePct, maxStakePct, balance, initialBalance, openStake = 0, recoveryActive = false, countertradeMultiplier = 1, confidence = 0, edge = 0, winStreak = 0, lossStreak = 0, emotionSensitivity, battleEmotion = 0, cardEmotion = false }) {
           const capital = capitalManagement({ strategy, balance, initialBalance, openStake, recoveryActive });
           if (capital.recoveryActive) return 100;
           if (strategy === "liangXi") return Number(maxStakePct) < 50 ? 0 : 50;
@@ -1676,7 +1808,7 @@
           const tiers = profile.stakeTiers.map((value) => value / profile.baseStakePct * configuredBase);
           const measuredConfidence = Number.isFinite(Number(confidence)) ? Number(confidence) : 0;
           let percent = measuredConfidence >= profile.tierConfidence[1] ? tiers[2] : measuredConfidence >= profile.tierConfidence[0] ? tiers[1] : tiers[0];
-          percent *= emotionAdjustment({ strategy, emotionSensitivity, battleEmotion, winStreak, lossStreak }).stakeMultiplier;
+          percent *= emotionAdjustment({ strategy, emotionSensitivity, battleEmotion, winStreak, lossStreak, cardEmotion }).stakeMultiplier;
           if (Number(battleEmotion) > 0) percent = Math.max(percent, probeStakePercent({ strategy, baseStakePct, maxStakePct, balance, battleEmotion }));
           if (Number.isFinite(balance) && balance > 0) percent = Math.max(percent, MIN_STAKE * 100 / balance);
           if (strategy === "contrarian") percent *= clamp(Number(countertradeMultiplier) || 1, 1, 2);
@@ -1730,6 +1862,7 @@
           const suppliedEmotionStreak = bounded(value.emotionStreak ?? value.emotion_streak, 0, 0, 4);
           const calculatedEmotion = emotionAdjustment({
             strategy,
+            cardEmotion: value.card_emotion === true,
             actionUrge,
             emotionSensitivity,
             battleEmotion,
@@ -1765,7 +1898,7 @@
             ] : [],
             ...characterStrategies.includes(strategy) ? [
               "Fictional game persona, never claim to be or represent the real person.",
-              ["czBrother", "firstLady"].includes(strategy) ? "BET only UP on BTCUSDT or BNBUSDT. Evaluate your own trend and liquidity conditions. You do not require any peer order or any peer loss streak." : strategy === "showoff" ? "Use only actual same-round czBrother orders in input.peers. Fade their stake-weighted direction; ties or no valid target require SKIP. No peer loss streak is required." : "Use only actual same-round non-Contrarian orders in input.peers. Combine all eligible peers using the supplied loss-history vote weights; never pick just one target. Inspect each peer\u2019s performance over at most 20 settled bets, net return, cumulative realized capital loss, directional outcomes and loss-chasing habits. Unsettled stakes are not realized losses. Fade the program-verified weighted majority. Only collective losses involving at least two losing current bettors, broad losses and aligned votes permit the supplied 1.25x, 1.5x or 2x stake multiplier. One losing person alone, or split directions, must not trigger collective escalation. If no material loss evidence exists, use the program-supplied crowd fallback and its action-urge loss-streak requirements. Ties or no eligible targets require SKIP. Missing payout data is unknown, not a loss. These histories are descriptions, not proof that a peer will lose again; keep confidence honest.",
+              strategy === "sunBrother" ? "Use the program-verified inverse technical consensus. A bullish technical consensus permits only DOWN; bearish permits only UP. Unclear or conflicting consensus requires SKIP. Do not use peers or reverse the reversed direction again." : strategy === "kzgMask" ? "Follow the frozen card style and program-verified structure confirmation: trend, closed-candle range break, volume and flow must agree. Sniper style needs a second closed-candle confirmation. Never invent missing bars or use peer orders." : ["czBrother", "firstLady"].includes(strategy) ? "BET only UP on BTCUSDT or BNBUSDT. Evaluate your own trend and liquidity conditions. You do not require any peer order or any peer loss streak." : strategy === "showoff" ? "Use only actual same-round czBrother orders in input.peers. Fade their stake-weighted direction; ties or no valid target require SKIP. No peer loss streak is required." : "Use only actual same-round non-Contrarian orders in input.peers. Combine all eligible peers using the supplied loss-history vote weights; never pick just one target. Inspect each peer\u2019s performance over at most 20 settled bets, net return, cumulative realized capital loss, directional outcomes and loss-chasing habits. Unsettled stakes are not realized losses. Fade the program-verified weighted majority. Only collective losses involving at least two losing current bettors, broad losses and aligned votes permit the supplied 1.25x, 1.5x or 2x stake multiplier. One losing person alone, or split directions, must not trigger collective escalation. If no material loss evidence exists, use the program-supplied crowd fallback and its action-urge loss-streak requirements. Ties or no eligible targets require SKIP. Missing payout data is unknown, not a loss. These histories are descriptions, not proof that a peer will lose again; keep confidence honest.",
               "Market-risk, positive-edge and hard caps still apply."
             ] : [],
             ...divinationStrategies.includes(strategy) ? [
@@ -1775,14 +1908,14 @@
               "Return divination with seed copied exactly from input.divination.seed, reading containing a short in-character interpretation (max 160 chars), and verdict equal to UP/DOWN for BET or WAIT for SKIP. Include ENTERTAINMENT_ONLY in warnings."
             ] : [],
             `Action urge: personal_action_urge=${personalActionUrge}/100; battle_action_urge=${battleActionUrge}/100; effective action_urge=${actionUrge}/100. The shared battle value raises every Agent toward 100 without erasing its personal baseline. A higher effective value may accept a weaker but still directional strategy signal and lowers the supplied minimum-confidence threshold by up to 8 points. It never creates a direction, overrides missing or stale data, accepts excessive market risk, removes the positive-edge check, or exceeds stake caps. SKIP remains a normal valid action in every round.`,
-            `Emotion rule: ${profile.enEmotionLabel} emotion_sensitivity=${emotionSensitivity}/100. battle_emotion=${battleEmotion}/100 applies from the first round: even without past results it raises the normal stake multiplier by up to 60% and lowers the confidence floor by up to 2.5 points. Win/loss streaks amplify this shared tilt, including for cautious strategies. It may change only the supplied minimum-confidence threshold and normal stake multiplier; it must never change direction, bypass market entry conditions, or exceed a hard stake cap.`,
+            value.card_emotion === true ? "Emotion is already computed from unique settlements, card sensitivity, gain and completed-round cooling. Use the supplied personality multiplier and minimum confidence without amplifying sensitivity or streaks again. Cautious personalities can reduce stakes after losses." : `Emotion rule: ${profile.enEmotionLabel} emotion_sensitivity=${emotionSensitivity}/100. battle_emotion=${battleEmotion}/100 applies from the first round: even without past results it raises the normal stake multiplier by up to 60% and lowers the confidence floor by up to 2.5 points. Win/loss streaks amplify this shared tilt, including for cautious strategies. It may change only the supplied minimum-confidence threshold and normal stake multiplier; it must never change direction, bypass market entry conditions, or exceed a hard stake cap.`,
             `Current emotion adjustment: state=${calculatedEmotion.state}; streak=${calculatedEmotion.streak}; personality_stake_multiplier=${calculatedEmotion.personalityStakeMultiplier.toFixed(3)}; shared_tilt_multiplier=${calculatedEmotion.globalStakeMultiplier.toFixed(3)}; normal_stake_multiplier=${emotionStakeMultiplier.toFixed(3)}; effective_minimum_confidence=${effectiveMinimumConfidence.toFixed(2)}. Follow these supplied values exactly.`,
-            `Probe sizing follows this personality's battle_emotion curve: the ordinary 5% budget rises linearly to ${highProbe}% at 100, subject to normal_stake_cap and max_stake_pct, with a ${MIN_STAKE} USDT minimum only when those hard caps and balance allow it. Normal stake sizing is at least this personality's current probe budget when permitted by hard caps. The supplied execution permissions and exact stake choices are authoritative.`,
+            value.capital_version === "SC-2" ? "SC-2 probes use only the lowest permitted personality tier. No minimum rounding-up, recovery exception, arbitrary fractions or additional exposure. If no supplied legal choice fits, SKIP." : `Probe sizing follows this personality's battle_emotion curve: the ordinary 5% budget rises linearly to ${highProbe}% at 100, subject to normal_stake_cap and max_stake_pct, with a ${value.capital_version === "SC-2" ? 0.1 : MIN_STAKE} USDT minimum only when those hard caps and balance allow it. Normal stake sizing is at least this personality's current probe budget when permitted by hard caps. The supplied execution permissions and exact stake choices are authoritative.`,
             ...battleEmotion >= 70 ? ["High-tilt decision preference: when a direction is permitted and your honest confidence clears the supplied minimum and positive-edge checks, prefer acting with the supplied normal or probe stake. A permitted probe does not need strong-signal consensus. Do not default to the minimum amount or wait for perfect alignment merely out of generic caution. SKIP remains valid for a specific uncertainty or unmet condition; explain it. Never inflate confidence or override a fixed direction, countertrade prerequisite, frozen oracle, or hard cap."] : [],
             `Selected indicator fields: ${selectedFields.join(", ")}.`,
             `Required indicator fields: ${requiredFields.length ? requiredFields.join(", ") : "none beyond the selected fields"}.`,
             `Policy limits: decision_variance=${variance}; personal_action_urge=${personalActionUrge}; battle_action_urge=${battleActionUrge}; action_urge=${actionUrge}; emotion_sensitivity=${emotionSensitivity}; battle_emotion=${battleEmotion}; minimum_confidence=${profile.minConfidence}; effective_minimum_confidence=${effectiveMinimumConfidence.toFixed(2)}; base_stake_pct=${profile.baseStakePct}; normal_stake_cap=${recovery ? 100 : Math.min(profile.normalMaxStakePct, maxStakePct)}; max_stake_pct=${maxStakePct}; allow_all_in=${allowAllIn}.`,
-            `Normal stake ladder for this personality: ${profile.stakeTiers[0]}% below ${profile.tierConfidence[0]} confidence; ${profile.stakeTiers[1]}% from ${profile.tierConfidence[0]} to below ${profile.tierConfidence[1]}; ${profile.stakeTiers[2]}% from ${profile.tierConfidence[1]} upward. Apply the supplied emotion multiplier and a minimum stake of ${MIN_STAKE} USDT, then obey normal_stake_cap and max_stake_pct. For Contrarian, also apply the program-supplied collective countertrade stake multiplier before the hard caps; never invent a multiplier. If the balance or either cap cannot cover the minimum, SKIP. Do not substitute another personality's ladder.`,
+            value.capital_version === "SC-2" ? `Legal normal stake tiers: ${strategy === "liangXi" ? "50" : profile.stakeTiers.join(", ")} percent. Confidence and the supplied emotion multiplier choose a tier, rounded down to an eligible tier, never to a new fraction. Never increase a stake to reach the 0.10 USDT minimum. The exact choices and pending exposure cap are authoritative.` : `Normal stake ladder for this personality: ${profile.stakeTiers[0]}% below ${profile.tierConfidence[0]} confidence; ${profile.stakeTiers[1]}% from ${profile.tierConfidence[0]} to below ${profile.tierConfidence[1]}; ${profile.stakeTiers[2]}% from ${profile.tierConfidence[1]} upward. Apply the supplied emotion multiplier and a minimum stake of ${MIN_STAKE} USDT, then obey normal_stake_cap and max_stake_pct. For Contrarian, also apply the program-supplied collective countertrade stake multiplier before the hard caps; never invent a multiplier. If the balance or either cap cannot cover the minimum, SKIP. Do not substitute another personality's ladder.`,
             ...strategy === "priceAction" ? [
               "raw_candles contains the latest 20 fully closed OHLC bars. Read only open, high, low, close, candle order and the supplied market odds. Do not infer or use RSI, MACD, moving averages, order book, volume, news or any hidden indicator.",
               "Look for visible engulfing candles, rejection wicks, two-candle runs, forceful candle bodies and breaks of recent highs or lows. One clear strong pattern can be enough; do not require several confirmations. Weak shapes or strong opposing patterns require SKIP."
@@ -1792,7 +1925,7 @@
             ],
             "Follow only the selected strategy rule. Never substitute another strategy when its prerequisites fail. Related indicators are correlated, not independent confirmations. The local execution permissions supplied with an independent model review are authoritative: they may admit a small probe at high action urge. Preserve long-only, countertrade, and frozen-oracle contracts.",
             "confidence is your uncalibrated estimate of the chosen direction probability in percent; it is not a measured win rate. Estimated edge = confidence / 100 * odds - 1, before fees.",
-            "Shared capital sizing: at or below 20% of cumulative invested capital, enter persistent RECOVERY_ALL_IN until funds recover to invested capital. Unsettled stakes are part of funds. For conservative and volatilityGuard, at 1.5x invested capital reduce the usual stake percentage by 20%, at 2x reduce it by 30%; minimum stake and caps still apply. Runtime capital mode and exact stake choices override the static amount ladder only; they never change directional prerequisites.",
+            value.capital_version === "SC-2" ? "SC-2 strict capital rules: minimum 0.10 USDT; round down to cents. The frozen user limit and personality limit both apply, as does the total unsettled exposure cap. Never bypass them for recovery. A triggered stop-loss blocks all new bets. Use only supplied exact stake choices." : "Shared capital sizing: at or below 20% of cumulative invested capital, enter persistent RECOVERY_ALL_IN until funds recover to invested capital. Unsettled stakes are part of funds. For conservative and volatilityGuard, at 1.5x invested capital reduce the usual stake percentage by 20%, at 2x reduce it by 30%; minimum stake and caps still apply. Runtime capital mode and exact stake choices override the static amount ladder only; they never change directional prerequisites.",
             allInRule,
             "decision_variance affects willingness to change a marginal decision. action_urge affects how much valid directional evidence is needed to act. Neither can bypass freshness, balance, positive edge, hard risk checks or stake caps. Losses alone are never evidence of an advantage.",
             "Use JSON numbers, not strings, booleans or null, for stake_usdt, stake_pct and confidence. SKIP requires direction=null, both stakes=0 and risk_mode=WAIT. Echo round_id as a string.",
@@ -1806,9 +1939,333 @@
     }
   });
 
+  // card-capital.cjs
+  var require_card_capital = __commonJS({
+    "card-capital.cjs"(exports, module) {
+      var { profiles, emotionAdjustment } = require_strategy_catalog();
+      var MINIMUM = 0.1;
+      var VERSION = "SC-2";
+      var defaults = Object.freeze({ maxStakePct: 100, exposurePct: 100, stopLossPct: null, allowAllIn: false });
+      var money = (value) => Math.floor((value + 1e-10) * 100) / 100;
+      function normalizeLimits(value = defaults) {
+        const fail = () => {
+          throw Object.assign(Error("INVALID_CARD_CAPITAL_LIMITS"), { code: "INVALID_CARD_CAPITAL_LIMITS", statusCode: 422 });
+        };
+        if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some((k) => !Object.hasOwn(defaults, k))) fail();
+        const result = { ...defaults, ...value };
+        for (const k of ["maxStakePct", "exposurePct"]) if (!Number.isInteger(result[k]) || result[k] < 1 || result[k] > 100) fail();
+        if (result.stopLossPct !== null && (!Number.isInteger(result.stopLossPct) || result.stopLossPct < 1 || result.stopLossPct > 99)) fail();
+        if (typeof result.allowAllIn !== "boolean") fail();
+        return result;
+      }
+      function context(policy, account) {
+        const limits = normalizeLimits(policy.capitalLimits), balance = account.balance, open = account.openStake || 0;
+        const initial = account.baseInitialBalance ?? account.initialBalance, added = account.addedCapital || 0, equity = balance + open;
+        if (![balance, open, initial, added].every(Number.isFinite) || balance < 0 || open < 0 || initial <= 0 || added < 0) throw Object.assign(Error("INVALID_CARD_ACCOUNT"), { code: "INVALID_CARD_ACCOUNT" });
+        const stopAt = limits.stopLossPct === null ? null : initial * (1 - limits.stopLossPct / 100), netEquity = equity - added;
+        const stopped = Boolean(account.capitalStopped) || stopAt !== null && netEquity <= stopAt + 1e-8;
+        const capacity = money(Math.max(0, equity * limits.exposurePct / 100 - open));
+        return {
+          version: VERSION,
+          recoveryActive: false,
+          stakeMultiplier: 1,
+          mode: stopped ? "STOP_LOSS" : "NORMAL",
+          stopped,
+          minimumStake: MINIMUM,
+          netEquity,
+          stopAt,
+          exposure: open,
+          exposureCapacity: capacity,
+          maxStake: stopped ? 0 : money(Math.min(balance * policy.maxStakePct / 100, capacity)),
+          limits
+        };
+      }
+      function accountFromInput(input) {
+        return {
+          balance: input.account.balance,
+          initialBalance: input.account.initial_balance,
+          baseInitialBalance: input.account.base_initial_balance,
+          addedCapital: input.account.added_capital,
+          openStake: input.account.open_stake,
+          capitalStopped: input.account.capital_stopped
+        };
+      }
+      function fromInput(input) {
+        return context({ capitalLimits: input.policy.capital_limits, maxStakePct: input.policy.max_stake_pct }, accountFromInput(input));
+      }
+      function normalPct(input, confidence) {
+        const p = input.policy, profile = profiles[p.strategy], capital = fromInput(input);
+        if (capital.stopped || p.trait_effects?.paused) return 0;
+        const cap = Math.min(p.max_stake_pct, profile.normalMaxStakePct), tiers = profile.fixedStakeChoices ? [50] : profile.stakeTiers;
+        const index = confidence >= profile.tierConfidence[1] ? 2 : confidence >= profile.tierConfidence[0] ? 1 : 0;
+        const emotion = emotionAdjustment({
+          strategy: p.strategy,
+          actionUrge: p.action_urge,
+          emotionSensitivity: p.emotion_sensitivity,
+          cardEmotion: true,
+          battleEmotion: p.battle_emotion,
+          winStreak: input.account.win_streak,
+          lossStreak: input.account.loss_streak
+        });
+        const effects = p.trait_effects || {}, shrink = effects.stakeMultiplier ?? 1;
+        const multiplier = emotion.stakeMultiplier < 1 ? Math.min(emotion.stakeMultiplier, shrink) : emotion.stakeMultiplier * shrink;
+        const baseIndex = effects.nextTier ? Math.min(index + 1, tiers.length - 1) : index;
+        const target = profile.fixedStakeChoices ? 50 : (tiers[baseIndex] + (effects.stakeBonus || 0)) * multiplier * (p.strategy === "contrarian" ? p.countertrade_stake_multiplier || 1 : 1);
+        const allowed = tiers.filter((pct) => pct <= cap && pct <= target + 1e-8 && money(input.account.balance * pct / 100) <= capital.maxStake);
+        return allowed.length ? Math.max(...allowed) : 0;
+      }
+      function probePct(input) {
+        const profile = profiles[input.policy.strategy];
+        const low = profile.fixedStakeChoices ? 50 : profile.stakeTiers[0];
+        return Math.min(low, normalPct(input, 0));
+      }
+      function assertStake(input, raw, confidence) {
+        const c = fromInput(input), profile = profiles[input.policy.strategy], amount = raw.stake_usdt;
+        const fail = (code) => {
+          throw Object.assign(Error(code), { code, statusCode: 422 });
+        };
+        if (c.stopped) fail("CARD_STOP_LOSS");
+        if (input.policy.trait_effects?.paused) fail("CARD_TRAIT_COOLDOWN");
+        if (amount < MINIMUM) fail("AI_STAKE_BELOW_MINIMUM");
+        if (amount > c.maxStake + 1e-8) fail("AI_STAKE_OVER_CAP");
+        if (raw.risk_mode !== "ALL_IN") {
+          const tiers = profile.fixedStakeChoices ? [50] : profile.stakeTiers;
+          const cap = normalPct(input, confidence);
+          if (!tiers.some((pct) => pct <= cap && Math.abs(money(input.account.balance * pct / 100) - amount) < 1e-8)) fail("CARD_STAKE_TIER_INVALID");
+        }
+      }
+      module.exports = { VERSION, MINIMUM, defaults, normalizeLimits, money, context, fromInput, normalPct, probePct, assertStake };
+    }
+  });
+
+  // round-direction.js
+  var require_round_direction = __commonJS({
+    "round-direction.js"(exports, module) {
+      function roundContext(market, indicators, slot, durationSeconds, observedAt) {
+        const rows = indicators?.raw?.klines;
+        const opening = Array.isArray(rows) ? rows.find((row) => Array.isArray(row) && Number(row[0]) === Number(slot)) : null;
+        const official = market?.variantData?.startPrice;
+        const startPrice = Number(official ?? opening?.[1]);
+        const observedPrice = Number(indicators?.spread?.mid ?? indicators?.price);
+        const remaining = Number(slot) + durationSeconds * 1e3 - observedAt;
+        if (!Number.isFinite(startPrice) || startPrice <= 0 || !Number.isFinite(observedPrice) || observedPrice <= 0 || !Number.isFinite(observedAt) || remaining <= 0 || remaining > durationSeconds * 1e3) return null;
+        const closed = (Array.isArray(rows) ? rows : []).filter((row) => Array.isArray(row) && Number(row[0]) <= observedAt && Number(row[6]) < observedAt).slice(-21);
+        if (closed.some((row, i) => Number(row[6]) !== Number(row[0]) + 59999 || i && Number(row[0]) - Number(closed[i - 1][0]) !== 6e4)) return null;
+        const returns = closed.slice(1).map((row, i) => Math.log(Number(row[4]) / Number(closed[i][4])) * 100);
+        if (returns.length < 10 || returns.some((value) => !Number.isFinite(value))) return null;
+        const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
+        const noise = Math.sqrt(returns.reduce((sum, value) => sum + (value - mean) ** 2, 0) / returns.length);
+        return {
+          start_price: startPrice,
+          observed_price: observedPrice,
+          displacement_pct: (observedPrice / startPrice - 1) * 100,
+          noise_pct_per_minute: noise,
+          observed_at: observedAt,
+          round_id: String(slot),
+          opening_price_basis: official != null ? "official-market" : "spot-open-proxy",
+          observed_price_basis: "spot-proxy",
+          version: 1
+        };
+      }
+      function alignRoundDirection(signal, input) {
+        const context = input.market.round_context, duration = input.market.round_duration_seconds, remaining = input.market.seconds_to_close;
+        const technical = ["aggressive", "smart", "conservative", "trendFollowing", "meanReversion", "breakout", "orderFlow", "volatilityGuard", "consensus", "priceAction"];
+        if (!technical.includes(input.policy.strategy) || !signal?.score || !context || context.round_id !== input.market.round_id || ![duration, remaining, context.displacement_pct, context.noise_pct_per_minute, context.observed_at].every(Number.isFinite) || duration <= 0 || remaining <= 0 || remaining > duration || context.noise_pct_per_minute <= 0 || input.market.data_timestamp - context.observed_at > 1e4 || context.observed_at - input.market.data_timestamp > 1e4) return signal;
+        const elapsed = 1 - remaining / duration;
+        const uncertainty = context.noise_pct_per_minute * Math.sqrt(Math.max(remaining / 60, 0.5));
+        const distance = context.displacement_pct / Math.max(uncertainty, 5e-3);
+        const up = 1 / input.market.up_odds, down = 1 / input.market.down_odds;
+        const marketUp = up / (up + down), target = Math.sign(distance);
+        const confirms = Number.isFinite(marketUp) && (target > 0 ? marketUp >= 0.55 : marketUp <= 0.45);
+        const corrected = elapsed >= 0.2 && Math.abs(distance) >= 1 && confirms && target !== Math.sign(signal.score);
+        return {
+          ...signal,
+          score: corrected ? target * Math.abs(signal.score) : signal.score,
+          factors: [...signal.factors, { name: "round_target", value: JSON.stringify({ distance: Number(distance.toFixed(3)), elapsed: Number(elapsed.toFixed(3)), basis: context.opening_price_basis, corrected }), impact: target > 0 ? "UP" : target < 0 ? "DOWN" : "NEUTRAL" }],
+          ...corrected ? { directionCorrection: { version: 1, from: signal.score > 0 ? "UP" : "DOWN", to: target > 0 ? "UP" : "DOWN", distance, elapsed, basis: context.opening_price_basis } } : {}
+        };
+      }
+      module.exports = { roundContext, alignRoundDirection };
+    }
+  });
+
+  // ai-sampling.cjs
+  var require_ai_sampling = __commonJS({
+    "ai-sampling.cjs"(exports, module) {
+      var deepseekNonThinking = (model) => /^(?:deepseek-chat|deepseek-v4-(?:flash|pro))$/.test(String(model || "").toLowerCase()) ? { thinking: { type: "disabled" } } : {};
+      function samplingFor({ provider, model, variance, kind = "decision", thinkingDisabled = false }) {
+        const audit = { version: 1, mode: "provider-default", reason: "MODEL_CAPABILITY_UNKNOWN", variance: null, temperature: null };
+        if (kind !== "decision") return { parameters: {}, audit: { ...audit, reason: "CONNECTION_CHECK" } };
+        if (!Number.isFinite(variance) || variance < 0 || variance > 100) throw Object.assign(Error("AI_VARIANCE_INVALID"), { code: "AI_VARIANCE_INVALID", statusCode: 422, requestStarted: false });
+        audit.variance = variance;
+        const name = String(model || "").toLowerCase(), parameters = {};
+        let supported = false;
+        if (provider === "openai") {
+          supported = /^gpt-4(?:o(?:-mini)?|\.1(?:-mini|-nano)?)(?:-\d{4}-\d{2}-\d{2})?$/.test(name);
+          if (/^gpt-5\.(?:1|2|4)(?:-\d{4}-\d{2}-\d{2})?$/.test(name)) {
+            supported = true;
+            parameters.reasoning_effort = "none";
+          } else if (/^(?:gpt-6(?:[.-]|$)|gpt-5(?:-(?:mini|nano)|$)|o[134](?:[.-]|$))/.test(name)) audit.reason = "MODEL_SAMPLING_UNSUPPORTED";
+        } else if (provider === "anthropic") {
+          supported = /^claude-(?:(?:sonnet|opus)-4-[56]|haiku-4-5)(?:-\d{8})?$/.test(name);
+          if (!supported && /^claude-(?:(?:opus|sonnet)-4-[78]|(?:opus|sonnet|haiku)-5|mythos)(?:-|$)/.test(name)) audit.reason = "MODEL_SAMPLING_UNSUPPORTED";
+        } else if (provider === "deepseek") {
+          supported = thinkingDisabled && /^(?:deepseek-chat|deepseek-v4-(?:flash|pro))$/.test(name);
+          if (!thinkingDisabled || name === "deepseek-reasoner") audit.reason = "THINKING_SAMPLING_UNSUPPORTED";
+        }
+        if (supported) {
+          parameters.temperature = Number((0.15 + variance / 200).toFixed(6));
+          Object.assign(audit, { mode: "variance", reason: null, temperature: parameters.temperature });
+        }
+        return { parameters, audit };
+      }
+      module.exports = { samplingFor, deepseekNonThinking };
+    }
+  });
+
+  // public/card-lab-data.js
+  var require_card_lab_data = __commonJS({
+    "public/card-lab-data.js"(exports, module) {
+      ((root, catalog) => {
+        const original = catalog.profiles;
+        const order = ["kzgMask", "liangXi", "diviner", "czBrother", "sunBrother", "showoff", "contrarian", "fengShui", "aggressive", "smart", "conservative", "trendFollowing", "meanReversion", "breakout", "orderFlow", "volatilityGuard", "consensus", "priceAction", "firstLady"];
+        const assets = { sunBrother: "sun-brother-blond-v2", kzgMask: "kzg-mask-bro-concept-lavender", liangXi: "liang-xi-lavender", diviner: "diviner", czBrother: "cz-brother-v2-lavender", showoff: "showoff-lavender", contrarian: "contrarian-lavender", fengShui: "feng-shui-master", aggressive: "../delivery-rider-avatar", smart: "super-ai", conservative: "miser", trendFollowing: "trend-chaser", meanReversion: "bottom-top-hunter", breakout: "rocket-bro", orderFlow: "whale-detective", volatilityGuard: "steady-dog", consensus: "six-vote-warrior", priceAction: "candlestick-bro", firstLady: "first-lady-lavender" };
+        const ranges = { sunBrother: [[25, 85], [15, 65], [15, 65]], liangXi: [[25, 95], [75, 100], [15, 75]], aggressive: [[60, 100], [60, 100], [50, 100]], smart: [[35, 85], [5, 45], [20, 75]], conservative: [[10, 50], [30, 80], [5, 35]], trendFollowing: [[35, 85], [30, 85], [15, 65]], meanReversion: [[25, 75], [45, 95], [10, 55]], breakout: [[35, 90], [40, 90], [20, 75]], orderFlow: [[35, 90], [15, 60], [15, 65]], volatilityGuard: [[10, 50], [0, 20], [0, 30]], consensus: [[30, 75], [5, 45], [10, 50]], priceAction: [[50, 100], [25, 80], [40, 95]], czBrother: [[35, 85], [10, 50], [15, 65]], firstLady: [[55, 95], [25, 75], [30, 80]], showoff: [[45, 95], [40, 95], [35, 85]], contrarian: [[25, 80], [10, 60], [10, 60]], diviner: [[30, 85], [15, 70], [25, 80]], fengShui: [[25, 80], [10, 55], [20, 70]], kzgMask: [[20, 75], [10, 50], [10, 50]] };
+        const styles = { inverse: { delta: [0, 0, 0], traits: ["inverse", "patient", "rethink"], color: "tech" }, wild: { delta: [40, 20, 30], traits: ["eager", "snowball", "stubborn"], color: "wild" }, patient: { delta: [-15, -10, -15], traits: ["patient", "rethink"], color: "calm" }, sniper: { delta: [-10, -5, -10], traits: ["confirm", "patient", "rethink"], color: "tech" }, chase: { delta: [15, 5, 10], traits: ["confirm", "eager"], color: "wild" }, cautious: { delta: [-15, -10, -10], traits: ["patient", "retreat"], color: "calm" }, stubborn: { delta: [10, 10, 10], traits: ["stubborn", "rethink"], color: "wild" }, precise: { delta: [-5, -5, -5], traits: ["confirm", "protect"], color: "tech" }, trend: { delta: [0, 0, -5], traits: ["confirm", "patient"], color: "tech" }, original: { delta: [0, 0, 0], traits: ["core"], color: "calm" } };
+        function traitsFor(card, version = "CT-1") {
+          if (version === "CT-0") return [...styles[card.styleId].traits];
+          if (version !== "CT-1") throw new Error("CARD_TRAITS_VERSION_INVALID");
+          const list = { wild: ["eager", "snowball", "insight"], patient: ["patient", "rethink", "waitFatigue"], sniper: ["confirm", "patient"], chase: ["confirm", "eager", "waitFatigue"], cautious: ["patient", "retreat", "cooldown"], stubborn: ["rethink", "stubborn"], precise: ["confirm", "protect"], trend: ["confirm", "patient"], inverse: ["inverse", "patient", "rethink"], original: ["core"] }[card.styleId];
+          if (!list) throw new Error("Invalid card style");
+          return card.personaId === "kzgMask" && ["sniper", "trend"].includes(card.styleId) ? [...list, "resonance"] : [...list];
+        }
+        const compatible = { sunBrother: ["inverse"], liangXi: ["wild", "patient"], aggressive: ["wild", "chase"], smart: ["sniper", "precise"], conservative: ["cautious", "precise"], trendFollowing: ["chase", "trend"], meanReversion: ["patient", "stubborn"], breakout: ["chase", "sniper"], orderFlow: ["chase", "sniper"], volatilityGuard: ["cautious", "precise"], consensus: ["cautious", "precise"], priceAction: ["wild", "sniper"], czBrother: ["chase", "trend"], firstLady: ["chase", "trend"], showoff: ["stubborn", "sniper"], contrarian: ["precise", "sniper"], diviner: ["cautious", "chase"], fengShui: ["cautious", "chase"], kzgMask: ["sniper", "chase", "trend", "wild"] };
+        const sourceFor = (id) => ["diviner", "fengShui"].includes(id) ? "oracle" : ["showoff", "contrarian"].includes(id) ? "peers" : "technical";
+        const personas = Object.fromEntries(order.map((id) => {
+          const p = original[id] || { label: "KZG\u53E3\u7F69\u54E5", enLabel: "KZG Mask Bro", actionUrge: 35, emotionSensitivity: 25, variance: 20, maxStakePct: 20, required: ["ema", "adx", "longReturns", "candles", "donchian", "volume", "takerFlow", "orderbook", "atr", "spread", "odds"] };
+          return [id, { id, label: p.label, enLabel: p.enLabel, base: [p.actionUrge, p.emotionSensitivity, p.variance], ranges: ranges[id], styles: compatible[id], source: sourceFor(id), image: "strategy-icons/" + assets[id] + ".png", required: [...p.required], cap: p.maxStakePct }];
+        }));
+        const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+        function makeCard(personaId, styleId, seed = 1, id) {
+          const p = personas[personaId];
+          if (!p || !styles[styleId] || styleId !== "original" && !p.styles.includes(styleId)) throw new Error("Invalid concept card");
+          let state = seed >>> 0;
+          const next = () => {
+            state = Math.imul(1664525, state) + 1013904223 >>> 0;
+            return state / 4294967296;
+          };
+          const stats = p.base.map((v, i) => styleId === "original" ? v : clamp(v + styles[styleId].delta[i] + (seed === 0 ? 0 : Math.floor(next() * 7) - 3), ...p.ranges[i]));
+          return { id: id || "card-" + personaId + "-" + styleId + "-" + seed, personaId, styleId, seed, stats, version: "UI-2.0", createdAt: (/* @__PURE__ */ new Date()).toISOString() };
+        }
+        function draw() {
+          const values = new Uint32Array(3);
+          crypto.getRandomValues(values);
+          const p = personas[order[values[0] % order.length]];
+          return makeCard(p.id, p.styles[values[1] % p.styles.length], values[2], crypto.randomUUID());
+        }
+        function validCard(c) {
+          if (!c || typeof c.id !== "string" || c.id.length > 100 || !personas[c.personaId] || !styles[c.styleId] || !Number.isInteger(c.seed) || c.version !== "UI-2.0") return false;
+          try {
+            const original2 = makeCard(c.personaId, c.styleId, c.seed);
+            if (c.attributeSeed !== void 0 && (!Number.isInteger(c.attributeSeed) || c.attributeSeed < 0 || c.attributeSeed > 4294967295)) return false;
+            return JSON.stringify(c.attributeSeed === void 0 ? original2.stats : attributeStats(c.personaId, c.attributeSeed)) === JSON.stringify(c.stats);
+          } catch {
+            return false;
+          }
+        }
+        function attributeStats(personaId, seed) {
+          let value = seed >>> 0;
+          return personas[personaId].ranges.map(([min, max]) => {
+            value = Math.imul(1664525, value) + 1013904223 >>> 0;
+            return min + Math.floor(value / 4294967296 * (max - min + 1));
+          });
+        }
+        function rerollCard(c, seed) {
+          if (!validCard(c)) throw new Error("Invalid card");
+          let attributeSeed = seed >>> 0, stats = attributeStats(c.personaId, attributeSeed);
+          while (JSON.stringify(stats) === JSON.stringify(c.stats)) {
+            attributeSeed = attributeSeed + 1 >>> 0;
+            stats = attributeStats(c.personaId, attributeSeed);
+          }
+          return { ...c, attributeSeed, stats, revision: (c.revision || 0) + 1 };
+        }
+        const counterTechnicalDirection = (signal) => signal === "up" ? "down" : signal === "down" ? "up" : "wait";
+        const api = { counterTechnicalDirection, personas, order, styles, traitsFor, makeCard, draw, validCard, clamp, rerollCard };
+        if (typeof module === "object" && module.exports) module.exports = api;
+        if (root) root.CardLabData = api;
+      })(typeof window === "undefined" ? null : window, typeof module === "object" && module.exports ? require_strategy_catalog() : window.WarriorStrategyCatalog);
+    }
+  });
+
+  // card-policy.cjs
+  var require_card_policy = __commonJS({
+    "card-policy.cjs"(exports, module) {
+      var capital = require_card_capital();
+      var crypto2 = require_crypto2();
+      var cards = require_card_lab_data();
+      var { profiles } = require_strategy_catalog();
+      function invalid(code) {
+        return Object.assign(new Error(code), { code, statusCode: 422 });
+      }
+      function freezeCard(value, { capitalVersion = "SC-2", capitalLimits, traitsVersion = capitalVersion === "SC-2" ? "CT-1" : "CT-0" } = {}) {
+        if (!cards.validCard(value)) throw invalid("INVALID_STRATEGY_CARD");
+        if (!Object.hasOwn(profiles, value.personaId)) throw invalid("CARD_STRATEGY_UNSUPPORTED");
+        const snapshot = {
+          id: value.id,
+          personaId: value.personaId,
+          styleId: value.styleId,
+          seed: value.seed,
+          stats: [...value.stats],
+          version: value.version,
+          ...value.attributeSeed !== void 0 ? { attributeSeed: value.attributeSeed } : {}
+        };
+        const definition = cards.personas[snapshot.personaId];
+        if (!["CT-0", "CT-1"].includes(traitsVersion) || traitsVersion === "CT-1" && capitalVersion !== "SC-2") throw invalid("CARD_TRAITS_VERSION_INVALID");
+        const traits = cards.traitsFor(snapshot, traitsVersion);
+        if (!["SC-1", "SC-2"].includes(capitalVersion)) throw invalid("CARD_CAPITAL_VERSION_INVALID");
+        const limits = capitalVersion === "SC-2" ? capital.normalizeLimits(capitalLimits) : null;
+        const policyHash = crypto2.createHash("sha256").update(JSON.stringify({
+          schema: traitsVersion === "CT-1" ? 3 : capitalVersion === "SC-2" ? 2 : 1,
+          ...traitsVersion === "CT-1" ? { traitsVersion } : {},
+          ...limits ? { capitalVersion, capitalLimits: limits } : {},
+          persona: snapshot.personaId,
+          style: snapshot.styleId,
+          stats: snapshot.stats,
+          traits,
+          required: definition.required
+        })).digest("hex");
+        return { snapshot, traits, policyHash, definition, capitalVersion, traitsVersion, capitalLimits: limits };
+      }
+      function cardPolicy(value) {
+        const { snapshot, traits, policyHash, definition, capitalVersion, traitsVersion, capitalLimits } = freezeCard(value.cardSnapshot, { capitalVersion: value.capitalVersion ?? (value.cardPolicyHash ? "SC-1" : "SC-2"), capitalLimits: value.capitalLimits, traitsVersion: value.traitsVersion ?? (value.cardPolicyHash ? "CT-0" : "CT-1") });
+        if (value.strategy !== void 0 && value.strategy !== snapshot.personaId) throw invalid("CARD_PERSONA_MISMATCH");
+        if (value.cardPolicyHash !== void 0 && value.cardPolicyHash !== policyHash) throw invalid("CARD_POLICY_HASH_MISMATCH");
+        return {
+          ...value,
+          capitalVersion,
+          traitsVersion,
+          ...capitalLimits ? { capitalLimits } : {},
+          strategy: snapshot.personaId,
+          actionUrge: snapshot.stats[0],
+          emotionSensitivity: snapshot.stats[1],
+          decisionVariance: snapshot.stats[2],
+          indicators: [...definition.required],
+          cardSnapshot: snapshot,
+          cardPolicyHash: policyHash,
+          cardTraits: traits
+        };
+      }
+      module.exports = { freezeCard, cardPolicy };
+    }
+  });
+
   // mobile/http.cjs
   var require_http = __commonJS({
     "mobile/http.cjs"(exports, module) {
+      var nativeCookies = /* @__PURE__ */ new WeakMap();
+      function responseCookie(response) {
+        return nativeCookies.get(response) ?? response.headers.get("set-cookie");
+      }
       async function nativeFetch(input, options = {}) {
         const url = new URL(String(input));
         if (url.protocol !== "https:" || url.username || url.password) throw Error("MOBILE_HTTPS_REQUIRED");
@@ -1835,24 +2292,32 @@
           })]);
           signal?.throwIfAborted();
           if (result.status >= 300 && result.status < 400) throw Error("MOBILE_REDIRECT_REJECTED");
-          return new Response([204, 205, 304].includes(result.status) ? null : JSON.stringify(result.data), {
+          const response = new Response([204, 205, 304].includes(result.status) ? null : JSON.stringify(result.data), {
             status: result.status,
-            headers: { "content-type": "application/json" }
+            headers: { ...result.headers, "content-type": "application/json" }
           });
+          const cookie = Object.entries(result.headers || {}).find(([name]) => name.toLowerCase() === "set-cookie")?.[1];
+          if (cookie != null) nativeCookies.set(response, Array.isArray(cookie) ? cookie.join(", ") : String(cookie));
+          return response;
         } finally {
           clearTimeout(timer);
           signal?.removeEventListener("abort", onAbort);
         }
       }
-      module.exports = { nativeFetch, aiFetch: nativeFetch };
+      module.exports = { nativeFetch, aiFetch: nativeFetch, responseCookie };
     }
   });
 
   // ai-decision.js
   var require_ai_decision = __commonJS({
     "ai-decision.js"(exports, module) {
-      var crypto = require_crypto2();
+      var cardTraits = require_card_traits();
+      var { samplingFor, deepseekNonThinking } = require_ai_sampling();
+      var cardCapital = require_card_capital();
+      var globalControl = require_global_controls();
+      var crypto2 = require_crypto2();
       var DECISION_META = Symbol("trusted-decision-metadata");
+      var { cardPolicy } = require_card_policy();
       var { alignRoundDirection } = require_round_direction();
       var {
         MIN_STAKE,
@@ -1892,6 +2357,8 @@
         return Number.isInteger(number) && number >= min && number <= max ? number : fallback;
       }
       function normalizePolicy(value, id) {
+        if ((value?.capitalVersion || value?.traitsVersion) && !value.cardSnapshot) throw decisionError("CARD_CAPITAL_VERSION_INVALID");
+        if (value?.cardSnapshot !== void 0) value = cardPolicy(value);
         const fallback = DEFAULT_AGENT_POLICIES[id] || {
           id,
           name: `AI ${id}`,
@@ -1912,11 +2379,12 @@
         const requestedIndicators = !savedIndicators || legacyCoreDefaults ? rules.recommended : savedIndicators;
         const indicators = [.../* @__PURE__ */ new Set([...requestedIndicators.length >= 3 ? requestedIndicators : rules.recommended, ...rules.required])];
         const configuredCap = boundedInteger(value?.maxStakePct, fallback.maxStakePct, 5, 100);
-        const maxStakePct = rules.fixedStakeChoices ? 100 : Math.min(configuredCap, rules.maxStakePct);
+        const maxStakePct = value?.capitalVersion === "SC-2" ? Math.min(value.capitalLimits.maxStakePct, rules.maxStakePct) : rules.fixedStakeChoices ? 100 : Math.min(configuredCap, rules.maxStakePct);
         const requestedCoin = String(value?.coin || fallback.coin || "BTC").toUpperCase();
         if (value?.aiConnectionId !== void 0 && !["none", "deepseek", "openai", "anthropic", "custom"].includes(value.aiConnectionId)) throw decisionError("AI_CONNECTION_NOT_TESTED");
         return {
           id,
+          ...value?.cardSnapshot ? { cardSnapshot: value.cardSnapshot, cardPolicyHash: value.cardPolicyHash, cardTraits: value.cardTraits, traitsVersion: value.traitsVersion, capitalVersion: value.capitalVersion, ...value.capitalLimits ? { capitalLimits: value.capitalLimits } : {} } : {},
           ...value?.sourceAgentId ? { sourceAgentId: String(value.sourceAgentId).slice(0, 60), aiModelLabel: String(value.aiModelLabel || "").slice(0, 160) } : {},
           ...value?.aiConnectionId !== void 0 ? { aiConnectionId: value.aiConnectionId, aiConnectionRevision: typeof value.aiConnectionRevision === "string" ? value.aiConnectionRevision : null } : {},
           name: String(value?.name || fallback.name).trim().slice(0, 18) || fallback.name,
@@ -1928,7 +2396,7 @@
           actionUrge: boundedInteger(value?.actionUrge, rules.actionUrge, 0, 100),
           emotionSensitivity: boundedInteger(value?.emotionSensitivity, rules.emotionSensitivity, 0, 100),
           maxStakePct,
-          allowAllIn: rules.allowAllIn && maxStakePct === 100 && (rules.fixedStakeChoices || value?.allowAllIn !== false) ? true : false,
+          allowAllIn: rules.allowAllIn && maxStakePct === 100 && (value?.capitalVersion === "SC-2" ? value.capitalLimits.allowAllIn : rules.fixedStakeChoices || value?.allowAllIn !== false) ? true : false,
           indicators,
           minConfidence: rules.minConfidence,
           baseStakePct: rules.baseStakePct,
@@ -1956,13 +2424,20 @@
       function assertDecisionInputs(input) {
         if (Object.values(input.indicators).some((value) => !completeIndicator(value)) || (input.policy.required_indicators || []).some((field) => !completeIndicator(input.indicators[field]))) throw decisionError("AI_INDICATOR_MISSING");
       }
-      function buildDecisionContext({ market, indicators, account, policy, battleEmotion = 0, battleActionUrge = 0, peers = null, frozenDivination = null }) {
-        const capital = capitalManagement({ strategy: policy.strategy, ...account, recoveryActive: account.capitalRecovery });
-        const personalActionUrge = policy.actionUrge;
-        const actionUrge = effectiveActionUrge(personalActionUrge, battleActionUrge);
-        const emotion = emotionAdjustment({ strategy: policy.strategy, actionUrge, emotionSensitivity: policy.emotionSensitivity, battleEmotion, winStreak: account.winStreak, lossStreak: account.lossStreak });
+      function buildDecisionContext({ market, indicators, account, policy, battleEmotion = 0, battleActionUrge = 0, globalControls, peers = null, frozenDivination = null }) {
+        const capital = policy.capitalVersion === "SC-2" ? cardCapital.context(policy, account) : capitalManagement({ strategy: policy.strategy, ...account, recoveryActive: account.capitalRecovery });
+        const controls = globalControl.fromConfig({ globalControls, emotionLevel: battleEmotion, actionUrgeLevel: battleActionUrge });
+        const personalTilt = account.personalEmotion?.tilt || 0;
+        if (policy.cardSnapshot) {
+          battleEmotion = globalControl.effective(personalTilt, controls.tilt);
+          battleActionUrge = controls.urge;
+        }
+        const traitEffects = policy.traitsVersion === "CT-1" ? cardTraits.effects(account.cardTraitState, policy.cardTraits, { netEquity: capital.netEquity, initial: account.baseInitialBalance ?? account.initialBalance }) : null;
+        const personalActionUrge = Math.min(100, policy.actionUrge + (traitEffects?.urgeBonus || 0));
+        const actionUrge = policy.cardSnapshot ? globalControl.effective(personalActionUrge, battleActionUrge) : effectiveActionUrge(personalActionUrge, battleActionUrge);
+        const emotion = emotionAdjustment({ strategy: policy.strategy, actionUrge, emotionSensitivity: policy.emotionSensitivity, cardEmotion: Boolean(policy.cardSnapshot), battleEmotion, winStreak: account.winStreak, lossStreak: account.lossStreak });
         const countertrade = eligibleCountertradePeers(policy.strategy, actionUrge, { agentId: policy.id, roundId: market.roundId, asset: `${policy.coin}USDT`, peers });
-        return {
+        const input = {
           ...peers ? { peers: structuredClone(policy.strategy === "contrarian" ? peers : { ...peers, agents: peers.agents.map(({ performance, ...peer }) => peer) }) } : {},
           market: {
             asset: `${policy.coin}USDT`,
@@ -1980,6 +2455,9 @@
           account: {
             balance: Number(account.balance),
             initial_balance: Number(account.initialBalance ?? 100),
+            base_initial_balance: Number(account.baseInitialBalance ?? account.initialBalance ?? 100),
+            added_capital: Number(account.addedCapital || 0),
+            capital_stopped: Boolean(account.capitalStopped),
             capital_recovery: capital.recoveryActive,
             wins: Number(account.wins),
             losses: Number(account.losses),
@@ -1989,9 +2467,12 @@
           },
           policy: {
             agent_id: policy.id,
+            ...policy.cardSnapshot ? { card_snapshot: structuredClone(policy.cardSnapshot), card_policy_hash: policy.cardPolicyHash, card_traits: [...policy.cardTraits], card_emotion: true, personal_tilt: personalTilt, global_controls: controls } : {},
             ...policy.aiConnectionId !== void 0 ? { ai_connection_id: policy.aiConnectionId, ai_connection_revision: policy.aiConnectionRevision } : {},
             strategy: policy.strategy,
-            decision_variance: policy.decisionVariance,
+            ...traitEffects ? { traits_version: policy.traitsVersion, trait_effects: traitEffects } : {},
+            ...policy.capitalVersion ? { capital_version: policy.capitalVersion, capital_limits: policy.capitalLimits } : {},
+            decision_variance: policy.cardSnapshot ? globalControl.effective(policy.decisionVariance, controls.variance) : policy.decisionVariance,
             action_urge: actionUrge,
             personal_action_urge: personalActionUrge,
             battle_action_urge: Math.max(0, Math.min(100, Math.round(Number(battleActionUrge) || 0))),
@@ -2006,7 +2487,7 @@
             effective_minimum_confidence: Number(emotion.minimumConfidence.toFixed(2)),
             max_stake_pct: capital.recoveryActive ? 100 : policy.maxStakePct,
             capital_management: capital,
-            min_stake_usdt: capital.recoveryActive ? 0.01 : MIN_STAKE,
+            min_stake_usdt: policy.capitalVersion === "SC-2" ? cardCapital.MINIMUM : capital.recoveryActive ? 0.01 : MIN_STAKE,
             countertrade_stake_multiplier: policy.strategy === "contrarian" ? countertrade.stakeMultiplier : 1,
             allow_all_in: capital.recoveryActive || policy.allowAllIn,
             minimum_confidence: policy.minConfidence,
@@ -2017,11 +2498,14 @@
             required_indicators: PROFILE_RULES[policy.strategy].required.map((key) => indicatorCatalog[key].field)
           }
         };
+        if (traitEffects) input.policy.trait_effects = cardTraits.effects(account.cardTraitState, policy.cardTraits, { netEquity: capital.netEquity, initial: account.baseInitialBalance ?? account.initialBalance, resonant: cardTraits.strongResonance(coreSnapshot(input), policy.strategy) });
+        return input;
       }
       function countertradeForInput(input) {
         return eligibleCountertradePeers(input.policy.strategy, input.policy.action_urge, { agentId: input.policy.agent_id, roundId: input.market.round_id, asset: input.market.asset, peers: input.peers });
       }
       function capitalForInput(input) {
+        if (input.policy.capital_version === "SC-2") return cardCapital.fromInput(input);
         return capitalManagement({
           strategy: input.policy.strategy,
           balance: input.account.balance,
@@ -2032,6 +2516,12 @@
       }
       function countertradeMultiplier(input) {
         return input.policy.strategy === "contrarian" ? countertradeForInput(input).stakeMultiplier : 1;
+      }
+      function minimumForInput(input) {
+        return input.policy.capital_version === "SC-2" ? cardCapital.MINIMUM : capitalForInput(input).recoveryActive ? 0.01 : MIN_STAKE;
+      }
+      function normalForInput(input, confidence, legacy) {
+        return input.policy.capital_version === "SC-2" ? cardCapital.normalPct(input, confidence) : normalStakePercent(legacy);
       }
       function decisionStakeChoices(input) {
         const profile = PROFILE_RULES[input.policy.strategy], emotion = emotionForInput(input);
@@ -2044,14 +2534,18 @@
           risk_mode: "ALL_IN",
           requires: { strategyPermission: true, minimumConfidence: emotion.minimumConfidence, positiveEdge: true }
         } : null };
-        const normal = [0, ...profile.tierConfidence].map((minimum, index) => {
+        const normal = input.policy.capital_version === "SC-2" ? (profile.fixedStakeChoices ? [50] : profile.stakeTiers).flatMap((pct) => {
+          const minimum = [emotion.minimumConfidence, ...profile.tierConfidence, 100].sort((a, b) => a - b).find((conf) => conf >= emotion.minimumConfidence && cardCapital.normalPct(input, conf) >= pct);
+          const amount = amountFor(pct);
+          return minimum !== void 0 && amount.stake_usdt >= cardCapital.MINIMUM ? [{ minimum_confidence: minimum, maximum_confidence: 100, ...amount, risk_mode: "NORMAL" }] : [];
+        }) : [0, ...profile.tierConfidence].map((minimum, index) => {
           const maximum = profile.tierConfidence[index] === void 0 ? 100 : profile.tierConfidence[index] - 1e-6;
-          const pct = normalStakePercent({ countertradeMultiplier: countertradeMultiplier(input), balance: input.account.balance, initialBalance: input.account.initial_balance, openStake: input.account.open_stake || 0, recoveryActive: input.account.capital_recovery, strategy: input.policy.strategy, baseStakePct: input.policy.base_stake_pct, maxStakePct: input.policy.max_stake_pct, confidence: minimum, winStreak: input.account.win_streak, lossStreak: input.account.loss_streak, emotionSensitivity: input.policy.emotion_sensitivity, battleEmotion: input.policy.battle_emotion });
+          const pct = normalForInput(input, minimum, { countertradeMultiplier: countertradeMultiplier(input), balance: input.account.balance, initialBalance: input.account.initial_balance, openStake: input.account.open_stake || 0, recoveryActive: input.account.capital_recovery, strategy: input.policy.strategy, baseStakePct: input.policy.base_stake_pct, maxStakePct: input.policy.max_stake_pct, confidence: minimum, winStreak: input.account.win_streak, lossStreak: input.account.loss_streak, emotionSensitivity: input.policy.emotion_sensitivity, cardEmotion: input.policy.card_emotion, battleEmotion: input.policy.battle_emotion });
           return { minimum_confidence: Math.max(minimum, emotion.minimumConfidence), maximum_confidence: maximum, ...amountFor(pct), risk_mode: countertradeMultiplier(input) > 1 ? "ADD_ON" : "NORMAL" };
-        }).filter((row) => row.stake_usdt >= MIN_STAKE && row.minimum_confidence <= row.maximum_confidence);
+        }).filter((row) => row.stake_usdt >= minimumForInput(input) && row.minimum_confidence <= row.maximum_confidence);
         const permission = ["UP", "DOWN"].map((direction) => betPermission(input, direction)).find((p) => p.probe);
         const probe = permission ? { ...amountFor(permission.maxProbePct), risk_mode: "NORMAL" } : null;
-        return { normal, probe: probe?.stake_usdt >= MIN_STAKE ? probe : null, ...input.account.balance >= MIN_STAKE && input.policy.allow_all_in && input.policy.max_stake_pct === 100 ? { all_in: { ...amountFor(100), risk_mode: "ALL_IN", requires: { ...allInRequirements({ strategy: input.policy.strategy, battleEmotion: input.policy.battle_emotion }), strongConsensus: true } } } : {} };
+        return { normal, probe: probe?.stake_usdt >= minimumForInput(input) ? probe : null, ...input.account.balance >= minimumForInput(input) && (capitalForInput(input).maxStake === void 0 || capitalForInput(input).maxStake >= Math.floor(input.account.balance * 100) / 100) && input.policy.allow_all_in && input.policy.max_stake_pct === 100 ? { all_in: { ...amountFor(100), risk_mode: "ALL_IN", requires: { ...allInRequirements({ strategy: input.policy.strategy, battleEmotion: input.policy.battle_emotion }), strongConsensus: true } } } : {} };
       }
       function decisionFacts(input) {
         const permissions = Object.fromEntries(["UP", "DOWN"].map((direction) => [direction, betPermission(input, direction)]));
@@ -2086,6 +2580,7 @@
           timeframe: input.market?.timeframe,
           strategy: input.policy?.strategy,
           decision_variance: input.policy?.decision_variance,
+          card_emotion: input.policy?.card_emotion,
           action_urge: input.policy?.action_urge,
           personal_action_urge: input.policy?.personal_action_urge,
           battle_action_urge: input.policy?.battle_action_urge,
@@ -2098,6 +2593,7 @@
           max_stake_pct: input.policy?.max_stake_pct,
           allow_all_in: input.policy?.allow_all_in,
           capital_recovery: capitalForInput(input).recoveryActive,
+          capital_version: input.policy?.capital_version,
           indicatorFields: Object.keys(input.indicators || {})
         });
         const target = "\nPredict settlement relative to the ORIGINAL round opening price, not merely the next price move. market.round_context, when present, contains opening/current price, distance and closed-candle noise; spot-proxy prices are NOT the official oracle. A small rebound can still settle DOWN, and a pullback can still settle UP. Never invent an unavailable opening price. The shared local direction check aligns technical strategy signals to this target; fixed-side characters and frozen oracle contracts remain unchanged.";
@@ -2105,15 +2601,18 @@
         const correction = signal?.directionCorrection ? `
 Local settlement-target correction: ${JSON.stringify(signal.directionCorrection)}. Any BET must use the corrected direction; keep the same stake ladder, confidence requirements and positive-edge gate. Do not increase confidence merely to make the corrected side affordable.` : "";
         const advice = input.policy?.review_mode === "model" ? `
-This is an independent model review, not proof of an entry signal. Read the market and choose BET or SKIP. Local execution permissions for this exact input: ${JSON.stringify(Object.fromEntries(["UP", "DOWN"].map((direction) => [direction, betPermission(input, direction)])))}. A probe uses the supplied maxProbePct, which follows this personality\u2019s tilt curve rather than a shared fixed percentage; the minimum is ${MIN_STAKE} USDT, including probes. Use only the supplied maxProbePct, while obeying configured and personality hard caps. If no legal amount reaches the minimum, SKIP. Never use ADD_ON or ALL_IN for a probe. Explain why you choose to act or wait. Do not increase confidence merely to pass the edge gate.` : "";
-        const capitalNote = `
+This is an independent model review, not proof of an entry signal. Read the market and choose BET or SKIP. Local execution permissions for this exact input: ${JSON.stringify(Object.fromEntries(["UP", "DOWN"].map((direction) => [direction, betPermission(input, direction)])))}. A probe uses the supplied maxProbePct, which follows this personality\u2019s tilt curve rather than a shared fixed percentage; the minimum is ${minimumForInput(input)} USDT, including probes. Use only the supplied maxProbePct, while obeying configured and personality hard caps. If no legal amount reaches the minimum, SKIP. Never use ADD_ON or ALL_IN for a probe. Explain why you choose to act or wait. Do not increase confidence merely to pass the edge gate.` : "";
+        const traitNote = input.policy.trait_effects ? `
+CT-1 active rules: ${JSON.stringify(input.policy.trait_effects)}. These effects are already applied to effective action urge and the supplied legal stake choices; do not apply them a second time. A pause requires SKIP. Traits never add confidence, bypass confirmation, retain an invalid signal, change direction or relax all-in conditions.` : "";
+        const capitalNote = input.policy.capital_version === "SC-2" ? `
+SC-2 strict limits: ${JSON.stringify(capitalForInput(input))}. Minimum 0.10 USDT; round down to cents. No recovery exception, no rounding up to reach the minimum. Submitted stakes must be a supplied legal personality tier and fit total pending exposure. If stopped or no legal tier fits, SKIP.` : `
 Capital sizing: ${JSON.stringify(capitalForInput(input))}. RECOVERY_ALL_IN is the shared exception to normal, probe and personality amount caps: any permitted BET must use the all_in choice until recovery ends. It does not override direction, freshness, minimum confidence, positive edge. Recovery-only paper bets may use the full sub-5 USDT balance down to 0.01 USDT; ordinary bets retain the 5 USDT minimum. PROFIT_PROTECTION reduces the usual percentage for cautious strategies; the exact stake choices already include that reduction.`;
         const amounts = `
 Exact stake choices for the current balance ${input.account.balance} USDT: ${JSON.stringify(decisionStakeChoices(input))}. After choosing an honest confidence, copy BOTH stake_usdt and stake_pct from the eligible normal confidence band, the probe row when execution permissions require a probe, or the all_in row when ALL_IN is enabled and every supplied ALL_IN condition is met. If no eligible amount exists, SKIP. Never assume 10 USDT means 10 percent. Money has at most two decimal places; percentages must describe the actual rounded amount. ALL_IN still needs every stated condition.`;
         const facts = `
 Program-verified decision facts: ${JSON.stringify(decisionFacts(input))}. These facts are authoritative. A permitted side is an option, never an obligation. Confidence must be strictly ABOVE that side's break_even_confidence_pct as well as at least minimum_confidence. For example, confidence 62 and odds 1.0417 means negative edge, not a thin positive edge. Do not raise confidence to qualify.
 For BET return skip_reason_code=null. For SKIP return exactly one of: STRATEGY_BLOCKED only if BOTH directions are forbidden; NO_ELIGIBLE_PEERS only for countertraders with eligible_count=0; ORACLE_WAIT only if input.divination.verdict=WAIT; otherwise MODEL_UNCERTAIN for your discretionary judgement (including insufficient confidence or edge). Never call an eligible target ineligible. Free-text reason is model commentary; the program checks the reason code against these facts.`;
-        const extra = target + correction + advice + facts + amounts + capitalNote + (input.market?.entry_mode === "signal" ? "\nThis is a mid-round review. Use seconds_to_close for the original round; a new full round does not start now." : "");
+        const extra = traitNote + target + correction + advice + facts + amounts + capitalNote + (input.market?.entry_mode === "signal" ? "\nThis is a mid-round review. Use seconds_to_close for the original round; a new full round does not start now." : "");
         return prompt.replace("Return exactly one JSON object", `${extra}
 Return exactly one JSON object`);
       }
@@ -2174,11 +2673,13 @@ Return exactly one JSON object`);
           takerFlow: i.taker_flow_5,
           spread: i.spread_microprice,
           longReturns: i.returns_15_60,
-          marketOdds: i.market_odds
+          marketOdds: i.market_odds,
+          donchian: i.donchian_20,
+          candles: i.raw_candles
         };
       }
       function emotionForInput(input) {
-        return emotionAdjustment({ strategy: input.policy.strategy, actionUrge: input.policy.action_urge, emotionSensitivity: input.policy.emotion_sensitivity, battleEmotion: input.policy.battle_emotion, winStreak: input.account.win_streak, lossStreak: input.account.loss_streak });
+        return emotionAdjustment({ strategy: input.policy.strategy, actionUrge: input.policy.action_urge, emotionSensitivity: input.policy.emotion_sensitivity, cardEmotion: input.policy.card_emotion, battleEmotion: input.policy.battle_emotion, winStreak: input.account.win_streak, lossStreak: input.account.loss_streak });
       }
       function emotionFactor(emotion) {
         return { name: "emotion", value: `${emotion.state}:${emotion.streak}; own=${emotion.sensitivity}; arena=${emotion.battleEmotion}; stake=x${emotion.stakeMultiplier.toFixed(3)}; min_confidence=${emotion.minimumConfidence.toFixed(2)}`, impact: "NEUTRAL" };
@@ -2193,36 +2694,38 @@ Return exactly one JSON object`);
           describe: () => ({ mode: "mock", provider: "Local deterministic model", model: "offline-v2", configured: true, simulated: true }),
           async decide(input) {
             assertDecisionInputs(input);
+            if (capitalForInput(input).stopped) return skip(input.market.round_id, "\u5DF2\u8FBE\u5230\u8D44\u91D1\u505C\u6B62\u7EBF");
             const signal = strategySignal(input) || signalScore(input);
             const oracle = signal.divination;
             const oracleResult = (verdict) => oracle ? { divination: { seed: oracle.seed, reading: formatDivination(oracle), verdict }, warnings: ["ENTERTAINMENT_ONLY"] } : {};
+            if (input.policy.trait_effects?.paused) return { ...skip(input.market.round_id, "CARD_TRAIT_COOLDOWN"), ...oracleResult("WAIT") };
             const { score } = signal, emotion = emotionForInput(input), factors = [...signal.factors, emotionFactor(emotion)];
             const direction = score >= 0 ? "UP" : "DOWN";
             const odds = direction === "UP" ? input.market.up_odds : input.market.down_odds;
-            const baseConfidence = confidenceForScore(score, input.policy.decision_variance, input.policy.strategy);
+            const baseConfidence = confidenceForScore(score, input.policy.card_emotion ? 50 : input.policy.decision_variance, input.policy.strategy);
             const nudge = personalityNudge({ strategy: input.policy.strategy, agentId: input.policy.agent_id, roundId: input.market.round_id, variance: input.policy.decision_variance, confidence: baseConfidence, minimumConfidence: emotion.minimumConfidence });
-            const confidence = Math.max(50, Math.min(97, baseConfidence + nudge));
+            const confidence = Math.max(50, Math.min(97, baseConfidence + (input.policy.card_emotion ? 0 : nudge)));
             factors.push({ name: "personality_nudge", value: nudge.toFixed(3), impact: "NEUTRAL" });
             const edge = confidence / 100 * odds - 1;
-            if (Math.abs(score) < entryThreshold(input) || confidence < emotion.minimumConfidence || edge <= 0) {
+            if (Math.abs(score) < entryThreshold(input) || confidence < emotion.minimumConfidence || input.policy.card_emotion && nudge < 0 && confidence < emotion.minimumConfidence - nudge || edge <= 0) {
               return { ...skip(input.market.round_id, oracle ? `${formatDivination(oracle)}\uFF1B\u672C\u5730\u6A21\u62DF\uFF0C\u672C\u8F6E\u89C2\u671B` : "\u6CA1\u6709\u901A\u8FC7\u672C\u5730\u9A8C\u8BC1\u7684\u6B63\u671F\u671B"), confidence: Math.round(confidence), factors, ...oracleResult("WAIT") };
             }
-            let stakePct = normalStakePercent({ countertradeMultiplier: countertradeMultiplier(input), balance: input.account.balance, initialBalance: input.account.initial_balance, openStake: input.account.open_stake || 0, recoveryActive: input.account.capital_recovery, strategy: input.policy.strategy, baseStakePct: input.policy.base_stake_pct, maxStakePct: input.policy.max_stake_pct, confidence, edge, winStreak: input.account.win_streak, lossStreak: input.account.loss_streak, emotionSensitivity: input.policy.emotion_sensitivity, battleEmotion: input.policy.battle_emotion });
+            let stakePct = normalForInput(input, confidence, { countertradeMultiplier: countertradeMultiplier(input), balance: input.account.balance, initialBalance: input.account.initial_balance, openStake: input.account.open_stake || 0, recoveryActive: input.account.capital_recovery, strategy: input.policy.strategy, baseStakePct: input.policy.base_stake_pct, maxStakePct: input.policy.max_stake_pct, confidence, edge, winStreak: input.account.win_streak, lossStreak: input.account.loss_streak, emotionSensitivity: input.policy.emotion_sensitivity, cardEmotion: input.policy.card_emotion, battleEmotion: input.policy.battle_emotion });
             let riskMode = input.policy.strategy !== "liangXi" && (countertradeMultiplier(input) > 1 || emotion.streak && emotion.stakeMultiplier > 1.001) ? "ADD_ON" : "NORMAL";
             const permission = betPermission(input, direction);
             const allInRules = allInRequirements({ strategy: input.policy.strategy, battleEmotion: input.policy.battle_emotion });
-            const allIn = !permission.probe && input.policy.allow_all_in && input.policy.max_stake_pct === 100 && confidence >= allInRules.confidence && edge >= allInRules.minimumEdge && strongCoreConsensus(coreSnapshot(input), direction, input.policy.strategy) && input.account.loss_streak >= allInRules.requiredLossStreak;
+            const allIn = (capitalForInput(input).maxStake === void 0 || capitalForInput(input).maxStake >= Math.floor(input.account.balance * 100) / 100) && !permission.probe && input.policy.allow_all_in && input.policy.max_stake_pct === 100 && confidence >= allInRules.confidence && edge >= allInRules.minimumEdge && strongCoreConsensus(coreSnapshot(input), direction, input.policy.strategy) && input.account.loss_streak >= allInRules.requiredLossStreak;
             if (allIn || capitalForInput(input).recoveryActive) {
               stakePct = 100;
               riskMode = "ALL_IN";
             }
             if (permission.probe) {
-              stakePct = Math.min(Math.max(stakePct, MIN_STAKE * 100 / input.account.balance), permission.maxProbePct);
+              stakePct = input.policy.capital_version === "SC-2" ? permission.maxProbePct : Math.min(Math.max(stakePct, MIN_STAKE * 100 / input.account.balance), permission.maxProbePct);
               riskMode = "NORMAL";
             }
             stakePct = Math.min(stakePct, capitalForInput(input).recoveryActive ? 100 : input.policy.max_stake_pct);
             const stake = Math.floor(input.account.balance * stakePct + 1e-8) / 100;
-            if (stake < (capitalForInput(input).recoveryActive ? 0.01 : MIN_STAKE)) return { ...skip(input.market.round_id, "\u91D1\u989D\u4F4E\u4E8E\u672C\u5730\u6700\u5C0F\u503C"), ...oracleResult("WAIT") };
+            if (stake < minimumForInput(input)) return { ...skip(input.market.round_id, "\u91D1\u989D\u4F4E\u4E8E\u672C\u5730\u6700\u5C0F\u503C"), ...oracleResult("WAIT") };
             return {
               round_id: input.market.round_id,
               action: "BET",
@@ -2245,7 +2748,7 @@ Return exactly one JSON object`);
       }
       function rawStrategySignal(input) {
         const profile = PROFILE_RULES[input.policy.strategy];
-        const character = evaluateCharacter(input.policy.strategy, coreSnapshot(input), input.policy.action_urge, { asset: input.market.asset, roundId: input.market.round_id, agentId: input.policy.agent_id, peers: input.peers });
+        const character = evaluateCharacter(input.policy.strategy, coreSnapshot(input), input.policy.action_urge, { asset: input.market.asset, roundId: input.market.round_id, agentId: input.policy.agent_id, peers: input.peers, styleId: input.policy.card_snapshot?.styleId });
         if (character) return character;
         const oracle = evaluateDivination(input.policy.strategy, coreSnapshot(input), { roundId: input.market.round_id, asset: input.market.asset, frozenReading: input.divination, actionUrge: input.policy.action_urge });
         if (oracle) return oracle;
@@ -2347,18 +2850,20 @@ Return exactly one JSON object`);
         return 2.4 - Math.max(0, Math.min(100, Number(input.policy.action_urge) || 0)) * 0.014;
       }
       function betPermission(input, direction) {
+        if (input.policy.trait_effects?.paused) return { allowed: false, reason: "CARD_TRAIT_COOLDOWN" };
         const signal = strategySignal(input), sign = direction === "UP" ? 1 : -1;
         const matched = signal?.score && Math.sign(signal.score) === sign;
         const i = input.indicators;
         const unsafe = i.spread_microprice?.basisPoints > 8 || i.atr_14?.percent > 1.2 || i.realized_volatility_20?.perMinutePct > 0.8;
-        const flexible = input.policy.review_mode === "model" && ["aggressive", "smart", "priceAction"].includes(input.policy.strategy);
+        const fullConfirmation = input.policy.traits_version === "CT-1" && input.policy.card_traits?.includes("confirm");
+        const flexible = !fullConfirmation && input.policy.review_mode === "model" && ["aggressive", "smart", "priceAction"].includes(input.policy.strategy);
         const weak = !matched || Math.abs(signal.score) < entryThreshold(input);
         const strongConflict = !matched && Math.abs(signal?.score || 0) >= 5;
         const patterns = signal?.factors?.filter((f) => ["engulfing", "rejection_wick", "range_break", "three_bar_structure", "candle_run", "body_drive"].includes(f.name)) || [];
         const patternConflict = patterns.some((f) => f.impact === "UP") && patterns.some((f) => f.impact === "DOWN");
         const allowed = !unsafe && (matched && !weak || flexible && input.policy.action_urge >= 70 && !strongConflict && !patternConflict && !signal?.directionCorrection && !["missing", "risk-off"].includes(signal?.regime));
         const probe = !capitalForInput(input).recoveryActive && Boolean(allowed && (weak || signal?.probe || Math.abs(signal?.score || 0) < 3));
-        return { allowed: Boolean(allowed), probe, maxProbePct: probeStakePercent({ strategy: input.policy.strategy, baseStakePct: input.policy.base_stake_pct, maxStakePct: input.policy.max_stake_pct, balance: input.account.balance, initialBalance: input.account.initial_balance, openStake: input.account.open_stake || 0, recoveryActive: input.account.capital_recovery, battleEmotion: input.policy.battle_emotion }) };
+        return { allowed: Boolean(allowed), probe, maxProbePct: input.policy.capital_version === "SC-2" ? cardCapital.probePct(input) : probeStakePercent({ strategy: input.policy.strategy, baseStakePct: input.policy.base_stake_pct, maxStakePct: input.policy.max_stake_pct, balance: input.account.balance, initialBalance: input.account.initial_balance, openStake: input.account.open_stake || 0, recoveryActive: input.account.capital_recovery, battleEmotion: input.policy.battle_emotion }) };
       }
       function entryWaitReason(input) {
         const signal = strategySignal(input);
@@ -2390,7 +2895,8 @@ Return exactly one JSON object`);
           signal.regime,
           Math.floor(Math.abs(signal.score)),
           candleCloseTime ?? null,
-          peers
+          peers,
+          input.policy.controls_revision ?? 0
         ]), score: signal.score };
       }
       function createDeepSeekDecisionProvider({ apiKey, baseUrl = "https://api.deepseek.com", model = "deepseek-chat", fetchImpl = require_http().aiFetch } = {}) {
@@ -2401,21 +2907,24 @@ Return exactly one JSON object`);
           async decide(input, { deadlineMs = Infinity, now = Date.now, onRequest, isCancelled } = {}) {
             assertDecisionInputs(input);
             if (!secret) throw decisionError("AI_NOT_CONFIGURED", 503);
-            const timeoutMs = Math.floor(Math.min(8e3, deadlineMs - now() - 250));
+            const timeoutMs = Math.floor(Math.min(input.market.entry_mode === "precompute" ? 2e4 : 8e3, deadlineMs - now() - 250));
             if (timeoutMs <= 0) throw decisionError("AI_DEADLINE_EXPIRED");
             if (isCancelled?.()) throw decisionError("AI_CONFIGURATION_CHANGED");
             const body = {
               model,
-              temperature: Math.min(0.65, 0.15 + input.policy.decision_variance / 200),
+              ...deepseekNonThinking(model),
               max_tokens: 1500,
               response_format: { type: "json_object" },
               messages: [{ role: "system", content: decisionPrompt(input) }, { role: "user", content: JSON.stringify(input) }]
             };
-            onRequest?.({ provider: "deepseek", body: structuredClone(body), responseContract: "strategy-v2" });
+            const sampling = samplingFor({ provider: "deepseek", model, variance: input.policy.decision_variance, thinkingDisabled: body.thinking?.type === "disabled" });
+            Object.assign(body, sampling.parameters);
+            onRequest?.({ provider: "deepseek", body: structuredClone(body), sampling: sampling.audit, responseContract: "strategy-v2" });
             let response;
             try {
               response = await fetchImpl(endpoint, {
                 method: "POST",
+                redirect: "error",
                 headers: { "content-type": "application/json", authorization: `Bearer ${secret}` },
                 body: JSON.stringify(body),
                 signal: AbortSignal.timeout(timeoutMs)
@@ -2441,7 +2950,7 @@ Return exactly one JSON object`);
               throw decisionError("AI_RESPONSE_INVALID");
             }
             if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw decisionError("AI_RESPONSE_INVALID");
-            Object.defineProperty(raw, DECISION_META, { value: { engine: { mode: "deepseek", provider: "DeepSeek", model, configured: true, simulated: false }, responseContract: "strategy-v2" } });
+            Object.defineProperty(raw, DECISION_META, { value: { engine: { mode: "deepseek", provider: "DeepSeek", model, configured: true, simulated: false }, sampling: sampling.audit, responseContract: "strategy-v2" } });
             return raw;
           }
         };
@@ -2512,6 +3021,7 @@ Return exactly one JSON object`);
           }
           return { ...base, direction: null, stake: 0, stakePct: 0, expectedEdge: null };
         }
+        if (input.policy.trait_effects?.paused) throw decisionError("CARD_TRAIT_COOLDOWN");
         if (!["UP", "DOWN"].includes(raw.direction)) throw decisionError("AI_DIRECTION_INVALID");
         assertDecisionInputs(input);
         const required = PROFILE_RULES[policy.strategy].required;
@@ -2525,7 +3035,8 @@ Return exactly one JSON object`);
           throw decisionError("AI_STAKE_INVALID");
         }
         const capital = capitalForInput(input);
-        if (stake < (capital.recoveryActive ? 0.01 : MIN_STAKE)) throw decisionError("AI_STAKE_BELOW_MINIMUM");
+        if (input.policy.capital_version === "SC-2") cardCapital.assertStake(input, raw, confidence);
+        if (stake < minimumForInput(input)) throw decisionError("AI_STAKE_BELOW_MINIMUM");
         const cap = Math.floor(input.account.balance * (capital.recoveryActive ? 100 : policy.maxStakePct) + 1e-8) / 100;
         if (capital.recoveryActive && (raw.risk_mode !== "ALL_IN" || Math.abs(stake - Math.floor(input.account.balance * 100 + 1e-8) / 100) > 1e-8)) throw decisionError("AI_ALL_IN_REJECTED");
         if (stake > input.account.balance || stake > cap || Math.abs(stakePct - stake / input.account.balance * 100) > 0.02) throw decisionError("AI_STAKE_OVER_CAP");
@@ -2542,7 +3053,7 @@ Return exactly one JSON object`);
         const odds = raw.direction === "UP" ? input.market.up_odds : input.market.down_odds;
         const expectedEdge = confidence / 100 * odds - 1;
         if (!Number.isFinite(expectedEdge) || expectedEdge <= 0) throw decisionError("AI_EDGE_NOT_POSITIVE");
-        const emotionalNormalCap = permission.probe ? permission.maxProbePct : normalStakePercent({ countertradeMultiplier: countertradeMultiplier(input), balance: input.account.balance, initialBalance: input.account.initial_balance, openStake: input.account.open_stake || 0, recoveryActive: input.account.capital_recovery, strategy: policy.strategy, baseStakePct: policy.baseStakePct, maxStakePct: policy.maxStakePct, confidence, edge: expectedEdge, winStreak: input.account.win_streak, lossStreak: input.account.loss_streak, emotionSensitivity: policy.emotionSensitivity, battleEmotion: input.policy.battle_emotion });
+        const emotionalNormalCap = permission.probe ? permission.maxProbePct : normalForInput(input, confidence, { countertradeMultiplier: countertradeMultiplier(input), balance: input.account.balance, initialBalance: input.account.initial_balance, openStake: input.account.open_stake || 0, recoveryActive: input.account.capital_recovery, strategy: policy.strategy, baseStakePct: policy.baseStakePct, maxStakePct: policy.maxStakePct, confidence, edge: expectedEdge, winStreak: input.account.win_streak, lossStreak: input.account.loss_streak, emotionSensitivity: policy.emotionSensitivity, cardEmotion: input.policy.card_emotion, battleEmotion: input.policy.battle_emotion });
         if (raw.risk_mode !== "ALL_IN" && stakePct > emotionalNormalCap + 0.02) throw decisionError("AI_STAKE_OVER_CAP");
         const allInRules = allInRequirements({ strategy: policy.strategy, battleEmotion: input.policy.battle_emotion });
         const effectivelyAllIn = raw.risk_mode === "ALL_IN" || stake >= input.account.balance * 0.95;
@@ -2563,9 +3074,11 @@ Return exactly one JSON object`);
       }
       function decisionAudit({ provider, input, plan, indicators, raw }) {
         return {
+          ...input.policy.trait_effects ? { traitEffects: structuredClone(input.policy.trait_effects) } : {},
           engine: raw?.[DECISION_META]?.engine || provider.describeFor?.(input) || provider.describe(),
           ...raw?.[DECISION_META]?.usage ? { usage: raw[DECISION_META].usage } : {},
-          inputHash: crypto.createHash("sha256").update(JSON.stringify(input)).digest("hex"),
+          ...raw?.[DECISION_META]?.sampling ? { sampling: raw[DECISION_META].sampling } : {},
+          inputHash: crypto2.createHash("sha256").update(JSON.stringify(input)).digest("hex"),
           roundId: input.market.round_id,
           dataTimestamp: Math.min(input.market.data_timestamp, indicators.dataTimestamp),
           action: plan.action,
@@ -2592,7 +3105,7 @@ Return exactly one JSON object`);
       function rejectedDecisionAudit({ provider, input, indicators, reason }) {
         return {
           engine: provider.describeFor?.(input) || provider.describe(),
-          inputHash: crypto.createHash("sha256").update(JSON.stringify(input)).digest("hex"),
+          inputHash: crypto2.createHash("sha256").update(JSON.stringify(input)).digest("hex"),
           roundId: input.market.round_id,
           dataTimestamp: Math.min(input.market.data_timestamp, indicators.dataTimestamp),
           action: "REJECTED",
@@ -2839,9 +3352,12 @@ Return exactly one JSON object`);
   // prediction-sim.js
   var require_prediction_sim = __commonJS({
     "prediction-sim.js"(exports, module) {
+      var cardTraits = require_card_traits();
+      var cardCapital = require_card_capital();
       var fs = require_fs();
+      var globalControl = require_global_controls();
       var path = require_path();
-      var crypto = require_crypto2();
+      var crypto2 = require_crypto2();
       var { roundContext } = require_round_direction();
       var { atomicWriteJson } = require_atomic_json();
       var { assertDecisionInputs, buildDecisionContext, decisionAudit, entrySignal, entryWaitReason, modelReview, normalizePolicy, rejectedDecisionAudit, validateDecision } = require_ai_decision();
@@ -2867,6 +3383,7 @@ Return exactly one JSON object`);
       var ENTRY_POLL_MS = 5e3;
       var ENTRY_COOLDOWN_MS = 3e4;
       var ENTRY_CLOSE_BUFFER_MS = 3e4;
+      var PRECOMPUTE_LEAD_MS = 45e3;
       var error = (code) => Object.assign(new Error(code), { code });
       function normalizeBattleEmotion(value = 0) {
         if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 100) throw error("INVALID_BATTLE_EMOTION");
@@ -3017,10 +3534,11 @@ Return exactly one JSON object`);
         period = "5m",
         emotionLevel = 0,
         actionUrgeLevel = 0,
+        globalControls,
         realtimeEntry = false,
         file,
         now = Date.now,
-        random = () => crypto.randomInt(2),
+        random = () => crypto2.randomInt(2),
         enabled = true,
         leaseEnabled = false,
         leaseMs = 3e4,
@@ -3032,6 +3550,7 @@ Return exactly one JSON object`);
         let normalizedAsset = ["BTCUSDT", "ETHUSDT", "BNBUSDT"].includes(String(asset).toUpperCase()) ? String(asset).toUpperCase() : "BTCUSDT";
         const normalizedPeriod = normalizePeriod(period);
         let roundMs = PERIODS[normalizedPeriod];
+        const initialControls = globalControl.fromConfig({ globalControls, emotionLevel, actionUrgeLevel });
         const startingPolicies = Array.isArray(agentPolicies) && agentPolicies.length ? agentPolicies : ["A", "B", "C"].map((id) => ({ id }));
         const startingBalance = Math.max(0.01, Math.round(Number(initialBalance) * 100) / 100 || 100);
         const roundLimit = maxRounds === "until-loss" || maxRounds == null ? null : Math.max(1, Math.floor(Number(maxRounds)) || 1);
@@ -3047,7 +3566,7 @@ Return exactly one JSON object`);
           endedAt: null,
           rounds: [],
           auditTrail: [],
-          config: { initialBalance: startingBalance, maxRounds: roundLimit, asset: normalizedAsset, period: normalizedPeriod, roundMs, emotionLevel: normalizeBattleEmotion(emotionLevel), actionUrgeLevel: normalizeBattleActionUrge(actionUrgeLevel), realtimeEntry: normalizeRealtimeEntry(realtimeEntry) },
+          config: { initialBalance: startingBalance, maxRounds: roundLimit, asset: normalizedAsset, period: normalizedPeriod, roundMs, emotionLevel: initialControls.tilt, actionUrgeLevel: initialControls.urge, globalControls: initialControls, realtimeEntry: normalizeRealtimeEntry(realtimeEntry) },
           agents: makeInitialAgents(),
           lastSeenAt: leaseEnabled ? now() : null
         };
@@ -3084,11 +3603,23 @@ Return exactly one JSON object`);
           state.auditTrail = Array.isArray(state.auditTrail) ? state.auditTrail : [];
           state.lastSeenAt = state.lastSeenAt ?? (leaseEnabled ? now() : null);
         }
+        try {
+          state.config.globalControls = globalControl.fromConfig(state.config);
+        } catch {
+          throw error("INVALID_SIM_LEDGER");
+        }
+        state.config.emotionLevel = state.config.globalControls.tilt;
+        state.config.actionUrgeLevel = state.config.globalControls.urge;
         normalizedAsset = state.config.asset;
         roundMs = state.config.roundMs;
         for (const agent of state.agents) agent.policy = normalizePolicy(agent.policy || policyFor?.(agent.id), agent.id);
+        for (const a of state.agents) if (a.policy.cardSnapshot) a.personalEmotion = globalControl.restoreEmotion(a.personalEmotion, state.rounds.filter((slot) => slot + roundMs <= now()));
+        for (const a of state.agents) if (a.policy.traitsVersion === "CT-1") {
+          if (restored && !a.cardTraitState) throw error("INVALID_CARD_TRAIT_STATE");
+          a.cardTraitState = cardTraits.restore(a.cardTraitState);
+        }
         let storageFailed = false, storageIssue = null, controlVersion = 0;
-        state.viewInstance = typeof state.viewInstance === "string" && state.viewInstance ? state.viewInstance : crypto.randomUUID();
+        state.viewInstance = typeof state.viewInstance === "string" && state.viewInstance ? state.viewInstance : crypto2.randomUUID();
         state.viewRevision = Number.isSafeInteger(state.viewRevision) && state.viewRevision >= 0 ? state.viewRevision : 0;
         state.updatedAt = Number.isFinite(state.updatedAt) ? state.updatedAt : now();
         const referencePrices = new Map(state.auditTrail.filter((event) => event.type === "MARKET_SNAPSHOT" && Number.isFinite(Number(event.indicators?.price))).map((event) => [event.id, Number(event.indicators.price)]));
@@ -3103,7 +3634,7 @@ Return exactly one JSON object`);
         const viewMeta = () => ({ stateVersion: `${state.viewInstance}:${state.viewRevision}`, updatedAt: state.updatedAt });
         function record(type, fields = {}) {
           const event = structuredClone({ id: state.auditTrail.length + 1, type, recordedAt: now(), ...fields });
-          event.hash = crypto.createHash("sha256").update(JSON.stringify(event)).digest("hex");
+          event.hash = crypto2.createHash("sha256").update(JSON.stringify(event)).digest("hex");
           state.auditTrail.push(event);
           if (type === "MARKET_SNAPSHOT" && Number.isFinite(Number(event.indicators?.price))) referencePrices.set(event.id, Number(event.indicators.price));
           return event.id;
@@ -3134,6 +3665,25 @@ Return exactly one JSON object`);
         for (const a of state.agents) if (a.lastStatus === "QUOTING") a.lastStatus = "SKIPPED";
         let nextSlot = nextRoundSlot(now(), roundMs);
         let prepared = null, busy = false, lastPrepare = 0, lastSettle = 0, failure = null;
+        let preparation = null;
+        const preparationKey = (a) => JSON.stringify([
+          policy(a.id),
+          account(a),
+          state.config.controlsRevision,
+          state.config.globalControls
+        ]);
+        function preparationView(a) {
+          if (!preparation || preparation.version !== controlVersion || !state.enabled || preparation.slot < now()) return null;
+          const item = preparation.agents.get(a.id);
+          return item ? {
+            roundId: String(preparation.slot),
+            status: item.status,
+            direction: item.raw?.direction || null,
+            action: item.raw?.action || null,
+            updatedAt: item.updatedAt,
+            reason: item.reason || null
+          } : null;
+        }
         const { RETRY_DELAYS, SETTLEMENT_POLL_MS, recoveryKind } = require_recovery_policy();
         let recoveryProbe = false;
         state.recovery = state.recovery || null;
@@ -3262,6 +3812,7 @@ Return exactly one JSON object`);
         }
         let lastEntryPoll = -Infinity;
         const integratedDecisions = Boolean(indicatorSource && decisionProvider && policyFor);
+        if (!integratedDecisions && state.agents.some((a) => a.policy.capitalVersion === "SC-2")) throw error("CARD_ENGINE_REQUIRED");
         const restoredRound = state.rounds.at(-1);
         if (!state.entryRound && restoredRound != null && now() < restoredRound + roundMs) {
           const evidence = state.auditTrail.find((e) => e.type === "MARKET_SNAPSHOT" && e.roundId === String(restoredRound));
@@ -3284,9 +3835,33 @@ Return exactly one JSON object`);
           return status === "WON" ? { winStreak: length, lossStreak: 0 } : { winStreak: 0, lossStreak: length };
         }
         function capitalForAgent(a) {
+          if (a.policy.capitalVersion === "SC-2") {
+            const result = cardCapital.context(a.policy, {
+              balance: a.cash,
+              initialBalance: state.config.initialBalance,
+              addedCapital: a.addedCapital || 0,
+              openStake: a.orders.filter((o) => o.status === "OPEN").reduce((sum, o) => sum + o.amount, 0),
+              capitalStopped: a.capitalStopped
+            });
+            return result;
+          }
           return capitalManagement({ strategy: a.policy.strategy, balance: a.cash, initialBalance: state.config.initialBalance + (a.addedCapital || 0), openStake: a.orders.filter((o) => o.status === "OPEN").reduce((sum, o) => sum + o.amount, 0), recoveryActive: a.capitalRecovery });
         }
-        const minimumStake = (a) => capitalForAgent(a).recoveryActive ? 0.01 : MIN_STAKE;
+        function syncCapitalStops() {
+          let changed = false;
+          for (const a of state.agents) if (a.policy.capitalVersion === "SC-2" && !a.capitalStopped) {
+            const c = capitalForAgent(a);
+            if (c.stopped) {
+              a.capitalStopped = true;
+              a.lastStatus = "STOPPED";
+              a.reason = "CARD_STOP_LOSS";
+              changed = true;
+              record("CAPITAL_STOPPED", { agentId: a.id, netEquity: c.netEquity, stopAt: c.stopAt });
+            }
+          }
+          if (changed) save("capital-stop");
+        }
+        const minimumStake = (a) => a.policy.capitalVersion === "SC-2" ? capitalForAgent(a).stopped ? Infinity : cardCapital.MINIMUM : capitalForAgent(a).recoveryActive ? 0.01 : MIN_STAKE;
         function account(a) {
           const open = a.orders.filter((order) => order.status === "OPEN");
           const wins = a.orders.filter((order) => order.status === "WON").length;
@@ -3297,7 +3872,7 @@ Return exactly one JSON object`);
             a.capitalRecovery = recovery;
             save("capital-mode");
           }
-          return { balance: a.cash, initialBalance: initialBalance2, openStake, capitalRecovery: a.capitalRecovery, wins, losses, ...streaks(a.orders) };
+          return { balance: a.cash, initialBalance: initialBalance2, baseInitialBalance: state.config.initialBalance, addedCapital: a.addedCapital || 0, capitalStopped: a.capitalStopped, openStake, capitalRecovery: a.capitalRecovery, personalEmotion: a.personalEmotion, cardTraitState: a.cardTraitState, wins, losses, ...streaks(a.orders) };
         }
         function touchState() {
           if (leaseEnabled) state.lastSeenAt = now();
@@ -3390,6 +3965,8 @@ Return exactly one JSON object`);
               const watching = state.enabled && !state.recovery && state.config.realtimeEntry && state.entryRound && now() < state.entryRound.slot + roundMs - ENTRY_CLOSE_BUFFER_MS && a.cash >= minimumStake(a) && a.lastStatus !== "QUOTING" && !a.orders.some((order) => order.start === state.entryRound.slot);
               return {
                 ...a,
+                ...a.cardTraitState ? { traitEffects: cardTraits.effects(a.cardTraitState, a.policy.cardTraits, { netEquity: a.cash + open.reduce((n, o) => n + o.amount, 0) - (a.addedCapital || 0), initial: state.config.initialBalance }) } : {},
+                preparation: preparationView(a),
                 lastStatus: watching ? "WATCHING" : a.lastStatus,
                 policy: policy(a.id),
                 orders,
@@ -3502,10 +4079,112 @@ Return exactly one JSON object`);
                 feesIncluded: o.quote.feesIncluded === true,
                 evidenceEventId
               };
+              if (a.personalEmotion) globalControl.settleEmotion(a.personalEmotion, o.status, policy(a.id).emotionSensitivity, state.config.globalControls);
+              if (a.cardTraitState) cardTraits.settle(a.cardTraitState, policy(a.id).cardTraits, { id: o.id, status: o.status, netProfit: o.payout - o.amount, netEquity: a.cash + a.orders.filter((x) => x.status === "OPEN").reduce((n, x) => n + x.amount, 0) - (a.addedCapital || 0), initial: state.config.initialBalance });
               record("SETTLEMENT", { roundId: String(o.start), agentId: a.id, orderId: o.id, settlement: o.settlement });
             }
             save("settlement");
+            syncCapitalStops();
           }
+          coolCompletedRounds();
+        }
+        function coolCompletedRounds() {
+          const completed = state.rounds.filter((slot) => slot + roundMs <= now());
+          let cooled = false;
+          for (const a of state.agents) if (a.personalEmotion) cooled = globalControl.coolEmotion(a.personalEmotion, completed, state.config.globalControls) || cooled;
+          for (const a of state.agents) if (a.cardTraitState) cooled = cardTraits.complete(a.cardTraitState, completed) || cooled;
+          if (cooled) save("emotion-traits-cooled");
+        }
+        function markTraits(a, slot, outcome, input) {
+          if (input?.policy.trait_effects?.paused) outcome = "paused";
+          const changed = Boolean(a.cardTraitState && cardTraits.mark(a.cardTraitState, a.policy.cardTraits, slot, outcome, { resonant: outcome !== "paused" && input?.policy.trait_effects?.nextTier }));
+          if (changed) record("TRAIT_ROUND_OBSERVED", { agentId: a.id, roundId: String(slot), outcome });
+          return changed;
+        }
+        function startPreparation(market, slot) {
+          if (!integratedDecisions || state.config.maxRounds && state.rounds.length >= state.config.maxRounds || preparation?.slot === slot && preparation.version === controlVersion) return;
+          const batch = preparation = { slot, version: controlVersion, marketId: String(market.marketTopicId), agents: /* @__PURE__ */ new Map() };
+          const valid = () => preparation === batch && state.enabled && !state.recovery && !storageFailed && controlVersion === batch.version && now() < slot;
+          for (const a of state.agents) if (a.cash >= minimumStake(a) && decisionStage(policy(a.id).strategy) === 0)
+            batch.agents.set(a.id, { status: "calculating", updatedAt: now() });
+          markChanged("precompute-started");
+          batch.task = (async () => {
+            const [indicators, upBook, downBook] = await Promise.all([
+              indicatorSource.snapshot(normalizedAsset, state.config.period),
+              (source.previewBook || source.book)(market, "UP"),
+              (source.previewBook || source.book)(market, "DOWN")
+            ]);
+            if (!valid()) return;
+            const at = now();
+            const up = quoteFromBook(upBook, String(market.markets[0].outcomes.find((o) => o.name === "Up").tokenId), at, 1);
+            const down = quoteFromBook(downBook, String(market.markets[0].outcomes.find((o) => o.name === "Down").tokenId), at, 1);
+            const snapshotId = record("PRECOMPUTE_SNAPSHOT", { roundId: String(slot), market, indicators, books: { up: upBook, down: downBook } });
+            await Promise.all(state.agents.filter((a) => batch.agents.has(a.id)).map(async (a) => {
+              const item = batch.agents.get(a.id), currentPolicy = policy(a.id);
+              try {
+                const input = buildDecisionContext({
+                  market: {
+                    roundId: slot,
+                    timeframe: state.config.period,
+                    roundDurationSeconds: roundMs / 1e3,
+                    secondsToClose: roundMs / 1e3,
+                    upOdds: up.odds,
+                    downOdds: down.odds,
+                    dataTimestamp: Math.min(up.bookTime, down.bookTime, indicators.dataTimestamp),
+                    roundContext: roundContext(market, indicators, slot, roundMs / 1e3, indicators.dataTimestamp)
+                  },
+                  indicators,
+                  account: account(a),
+                  policy: currentPolicy,
+                  battleEmotion: state.config.emotionLevel,
+                  battleActionUrge: state.config.actionUrgeLevel,
+                  globalControls: state.config.globalControls
+                });
+                input.market.entry_mode = "precompute";
+                input.market.seconds_to_start = (slot - at) / 1e3;
+                input.policy.controls_revision = state.config.controlsRevision || 0;
+                const engine = decisionProvider.describeFor?.(input) || decisionProvider.describe();
+                if (!["mock", "off", "offline", "legacy"].includes(engine.mode)) input.policy.review_mode = "model";
+                else if (state.config.realtimeEntry && !entrySignal(input)) {
+                  item.status = "waiting";
+                  return;
+                }
+                assertDecisionInputs(input);
+                if (input.policy.trait_effects?.paused) {
+                  item.status = "waiting";
+                  item.reason = "CARD_TRAIT_COOLDOWN";
+                  return;
+                }
+                if (!Number.isFinite(indicators.dataTimestamp) || at - indicators.dataTimestamp > 1e4 || indicators.dataTimestamp > at + 2e3) throw error("AI_DATA_STALE");
+                item.key = preparationKey(a);
+                const inputEventId = record("PRECOMPUTE_INPUT", { roundId: String(slot), agentId: a.id, snapshotId, input, policy: currentPolicy });
+                save("precompute-input");
+                const raw = await decisionProvider.decide(input, { deadlineMs: slot, now, isCancelled: () => !valid(), onRequest: (request) => {
+                  if (!valid()) throw error("QUOTE_WINDOW_MISSED");
+                  record("MODEL_REQUEST", { roundId: String(slot), agentId: a.id, inputEventId, request, precomputed: true });
+                  save("precompute-request");
+                } });
+                if (!valid()) return;
+                validateDecision(raw, { input, indicators, policy: currentPolicy, now: at });
+                Object.assign(item, { status: "ready", raw, input, indicators, at, inputEventId, updatedAt: now() });
+                record("PRECOMPUTE_READY", { roundId: String(slot), agentId: a.id, inputEventId, response: raw });
+              } catch (cause) {
+                item.status = "failed";
+                item.reason = cause.code || "AI_DECISION_FAILED";
+                item.updatedAt = now();
+              }
+            }));
+          })().catch((cause) => {
+            for (const item of batch.agents.values()) {
+              item.status = "failed";
+              item.reason = cause.code || "INPUT_UNAVAILABLE";
+            }
+          }).finally(() => {
+            if (valid()) try {
+              save("precompute-finished");
+            } catch {
+            }
+          });
         }
         async function decideRound(market, slot, attemptVersion, signalOnly = false) {
           const deadlineMs = signalOnly ? Math.min(now() + 1e4, slot + roundMs - ENTRY_CLOSE_BUFFER_MS) : slot + 1e4;
@@ -3554,6 +4233,7 @@ Return exactly one JSON object`);
                   policy: currentPolicy,
                   battleEmotion: state.config.emotionLevel,
                   battleActionUrge: state.config.actionUrgeLevel,
+                  globalControls: state.config.globalControls,
                   peers,
                   frozenDivination: state.entryRound?.oracles[a.id]
                 });
@@ -3581,6 +4261,13 @@ Return exactly one JSON object`);
                     opportunity = { reason: cause.code || "AI_INDICATOR_MISSING" };
                   }
                   if (!opportunity.key) {
+                    if (!external && opportunity.reason === entryWaitReason(input)) {
+                      try {
+                        assertDecisionInputs(input);
+                        oracleChanged = markTraits(a, slot, "wait", input) || oracleChanged;
+                      } catch {
+                      }
+                    }
                     a.waitReason = opportunity.reason;
                     if (a.lastStatus === "QUOTING") {
                       a.lastStatus = "SKIPPED";
@@ -3592,6 +4279,11 @@ Return exactly one JSON object`);
                   entryKey = opportunity.key;
                   a.lastStatus = "QUOTING";
                 } else if (currentPolicy.strategy === "showoff" && !entrySignal(input)) {
+                  try {
+                    assertDecisionInputs(input);
+                    oracleChanged = markTraits(a, slot, "wait", input) || oracleChanged;
+                  } catch {
+                  }
                   a.lastStatus = "SKIPPED";
                   a.reason = a.waitReason = "WAIT_CZ_BET";
                   return [];
@@ -3609,8 +4301,24 @@ Return exactly one JSON object`);
                 if (a.lastStatus !== "QUOTING") return;
                 try {
                   assertDecisionInputs(input);
+                  if (input.policy.trait_effects?.paused) {
+                    markTraits(a, slot, "paused", input);
+                    a.lastStatus = "SKIPPED";
+                    a.reason = "CARD_TRAIT_COOLDOWN";
+                    a.lastDecision = { roundId: String(slot), action: "SKIP", reason: a.reason, direction: null, stake: 0, stakePct: 0, traitEffects: input.policy.trait_effects, engine: { mode: "rules", simulated: true } };
+                    record("DECISION", { roundId: String(slot), agentId: a.id, inputEventId, risk: "TRAIT_PAUSE", decision: a.lastDecision });
+                    return;
+                  }
                   if (signalOnly && !validAttempt()) throw error("QUOTE_WINDOW_MISSED");
-                  const raw = await decisionProvider.decide(input, { deadlineMs, now, isCancelled: () => !validAttempt(), onRequest: (request) => {
+                  const candidate = preparation?.slot === slot && preparation.version === attemptVersion && preparation.marketId === String(market.marketTopicId) ? preparation.agents.get(a.id) : null;
+                  const forecast = candidate?.status === "ready" && !candidate.used && candidate.key === preparationKey(a) && now() - candidate.at <= PRECOMPUTE_LEAD_MS + 1e4 ? candidate : null;
+                  if (forecast) {
+                    forecast.used = true;
+                    const before = Number(forecast.indicators.price), current = Number(indicators.price);
+                    if (before > 0 && current > 0 && Math.abs(current / before - 1) > 25e-4) throw error("PRECOMPUTE_PRICE_MOVED");
+                    record("PRECOMPUTE_REUSED", { roundId: String(slot), agentId: a.id, inputEventId, precomputeInputEventId: forecast.inputEventId, ageMs: now() - forecast.at });
+                  }
+                  const raw = forecast ? forecast.raw : await decisionProvider.decide(input, { deadlineMs, now, isCancelled: () => !validAttempt(), onRequest: (request) => {
                     if (!validAttempt()) throw error("QUOTE_WINDOW_MISSED");
                     record("MODEL_REQUEST", { roundId: String(slot), agentId: a.id, inputEventId, request });
                     save("model-request");
@@ -3622,6 +4330,7 @@ Return exactly one JSON object`);
                   a.lastDecision = audit;
                   if (plan.action === "SKIP") {
                     record("DECISION", { roundId: String(slot), agentId: a.id, inputEventId, risk: "ACCEPTED_SKIP", decision: audit });
+                    markTraits(a, slot, "wait", input);
                     a.lastStatus = "SKIPPED";
                     a.reason = plan.reason || "AI_SKIPPED";
                     return;
@@ -3629,7 +4338,7 @@ Return exactly one JSON object`);
                   if (!validAttempt() || market.markets[0].tradingStatus !== "OPEN") throw error("QUOTE_WINDOW_MISSED");
                   const tokenId = plan.direction === "UP" ? upToken : downToken;
                   let executionBook = plan.direction === "UP" ? upBook : downBook;
-                  if (signalOnly) {
+                  if (signalOnly || forecast) {
                     const [freshMarket, freshBook] = await Promise.all([readSource("detail", market.marketTopicId), readSource("book", market, plan.direction)]);
                     validateMarket(freshMarket, slot, normalizedAsset, roundMs);
                     if (String(freshMarket.marketTopicId) !== String(market.marketTopicId) || freshMarket.markets[0].tradingStatus !== "OPEN" || ["RESOLVED", "SETTLED"].includes(freshMarket.markets[0].status) || !validAttempt()) throw error("QUOTE_WINDOW_MISSED");
@@ -3685,6 +4394,7 @@ Return exactly one JSON object`);
                   };
                   if (!Number.isFinite(Number(order.referencePrice)) || Number(order.referencePrice) <= 0) delete order.referencePrice;
                   a.orders.push(order);
+                  markTraits(a, slot, "bet", input);
                   record("PAPER_ORDER", { roundId: String(slot), agentId: a.id, orderId: intent.id, cashBefore, cashAfter: a.cash, quote });
                   a.lastStatus = "OPEN";
                   a.reason = plan.reason;
@@ -3740,6 +4450,8 @@ Return exactly one JSON object`);
                 return;
               }
             }
+            coolCompletedRounds();
+            syncCapitalStops();
             if (state.config.realtimeEntry && state.config.maxRounds && state.rounds.length >= state.config.maxRounds && now() >= state.rounds.at(-1) + roundMs) finish("ROUND_LIMIT");
             const slot = nextSlot;
             const attemptVersion = controlVersion;
@@ -3763,8 +4475,8 @@ Return exactly one JSON object`);
                 const eligible = state.enabled && attemptVersion === controlVersion && onBoundary && now() - slot < 1e4 && market && Number(market.startDate) === slot;
                 state.entryRound = eligible ? { slot, market, oracles: {}, attempts: {} } : null;
                 lastEntryPoll = now();
-                for (const a of state.agents) a.lastStatus = !state.enabled ? "PAUSED" : a.cash < (integratedDecisions ? minimumStake(a) : STAKE) ? "INSUFFICIENT_FUNDS" : eligible ? "QUOTING" : "SKIPPED";
-                for (const a of state.agents) if (a.lastStatus !== "QUOTING") record("ROUND_SKIPPED", { roundId: String(slot), agentId: a.id, reason: a.lastStatus === "INSUFFICIENT_FUNDS" ? a.lastStatus : "MARKET_OR_BOUNDARY_UNAVAILABLE" });
+                for (const a of state.agents) a.lastStatus = !state.enabled ? "PAUSED" : a.capitalStopped ? "STOPPED" : a.cash < (integratedDecisions ? minimumStake(a) : STAKE) ? "INSUFFICIENT_FUNDS" : eligible ? "QUOTING" : "SKIPPED";
+                for (const a of state.agents) if (a.lastStatus !== "QUOTING") record("ROUND_SKIPPED", { roundId: String(slot), agentId: a.id, reason: a.capitalStopped ? "CARD_STOP_LOSS" : a.lastStatus === "INSUFFICIENT_FUNDS" ? a.lastStatus : "MARKET_OR_BOUNDARY_UNAVAILABLE" });
                 save("round-started");
                 if (eligible) {
                   if (integratedDecisions) {
@@ -3828,7 +4540,8 @@ Return exactly one JSON object`);
                 } else markChanged("market-prepare-failed");
               }
             }
-            if (state.enabled && !hasOpenOrders() && state.agents.every((agent) => agent.cash < (integratedDecisions ? minimumStake(agent) : STAKE))) finish("BALANCE_DEPLETED");
+            if (state.enabled && prepared && nextSlot - now() > 2e3 && nextSlot - now() <= PRECOMPUTE_LEAD_MS) startPreparation(prepared, nextSlot);
+            if (state.enabled && !hasOpenOrders() && state.agents.every((agent) => agent.cash < (integratedDecisions ? minimumStake(agent) : STAKE))) finish(state.agents.some((a) => a.capitalStopped) ? "CARD_STOP_LOSS" : "BALANCE_DEPLETED");
           } catch (e) {
             failure = e.code || "SIMULATION_ERROR";
             if (pauseOnError && !["ended", "settling"].includes(state.lifecycle)) {
@@ -3908,6 +4621,23 @@ Return exactly one JSON object`);
             finish(reason);
             return snapshot();
           },
+          setGlobalControls(value, expectedRevision) {
+            if (storageFailed) throw error("STORAGE_ERROR");
+            if (["ended", "settling"].includes(state.lifecycle)) throw Object.assign(error("BATTLE_ENDED"), { statusCode: 409 });
+            const controls = globalControl.normalize(value), revision = state.config.controlsRevision || 0;
+            if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw Object.assign(error("INVALID_CONTROLS_REVISION"), { statusCode: 400 });
+            if (JSON.stringify(controls) === JSON.stringify(state.config.globalControls)) return snapshot();
+            if (expectedRevision !== revision) throw Object.assign(error("CONTROLS_CHANGED"), { statusCode: 409 });
+            controlVersion++;
+            state.config.globalControls = controls;
+            state.config.emotionLevel = controls.tilt;
+            state.config.actionUrgeLevel = controls.urge;
+            state.config.controlsRevision = revision + 1;
+            record("GLOBAL_CONTROLS_CHANGED", { controls, controlsRevision: revision + 1 });
+            touchState();
+            save("global-controls");
+            return snapshot();
+          },
           setEmotionLevel(value) {
             if (storageFailed) throw error("STORAGE_ERROR");
             if (["ended", "settling"].includes(state.lifecycle)) throw error("BATTLE_ENDED");
@@ -3915,6 +4645,7 @@ Return exactly one JSON object`);
             if (state.config.emotionLevel === emotionLevel2) return snapshot();
             controlVersion++;
             state.config.emotionLevel = emotionLevel2;
+            state.config.globalControls.tilt = emotionLevel2;
             state.config.controlsRevision = (state.config.controlsRevision || 0) + 1;
             record("EMOTION_CHANGED", { emotionLevel: emotionLevel2 });
             touchState();
@@ -3928,6 +4659,7 @@ Return exactly one JSON object`);
             if (state.config.actionUrgeLevel === actionUrgeLevel2) return snapshot();
             controlVersion++;
             state.config.actionUrgeLevel = actionUrgeLevel2;
+            state.config.globalControls.urge = actionUrgeLevel2;
             state.config.controlsRevision = (state.config.controlsRevision || 0) + 1;
             record("ACTION_URGE_CHANGED", { actionUrgeLevel: actionUrgeLevel2 });
             touchState();
@@ -3984,11 +4716,12 @@ Return exactly one JSON object`);
     "ai-connections.js"(exports, module) {
       var fs = require_fs();
       var path = require_path();
-      var crypto = require_crypto2();
+      var crypto2 = require_crypto2();
       var { atomicWriteJson } = require_atomic_json();
       var { profiles } = require_strategy_catalog();
       var { assertDecisionInputs, decisionPrompt, createMockDecisionProvider, DECISION_META } = require_ai_decision();
       var { aiFetch } = require_http();
+      var { samplingFor, deepseekNonThinking } = require_ai_sampling();
       var RETRY_DELAYS = [500, 1e3];
       var RETRYABLE = /* @__PURE__ */ new Set(["AI_REQUEST_FAILED", "AI_REQUEST_TIMEOUT", "AI_RATE_LIMITED", "AI_UPSTREAM_UNAVAILABLE"]);
       var CONNECTION_FAILURES = /* @__PURE__ */ new Set([...RETRYABLE, "AI_AUTH_FAILED", "AI_CONNECTION_NOT_TESTED"]);
@@ -4014,7 +4747,7 @@ Return exactly one JSON object`);
         const busy = /* @__PURE__ */ new Set();
         function key() {
           if (memoryKey) return memoryKey;
-          if (!file) return memoryKey = crypto.randomBytes(32);
+          if (!file) return memoryKey = crypto2.randomBytes(32);
           const target = `${file}.key`;
           if (fs.existsSync(target)) {
             memoryKey = fs.readFileSync(target);
@@ -4023,20 +4756,20 @@ Return exactly one JSON object`);
           }
           if (Object.keys(state.connections).length) throw fail("AI_VAULT_UNAVAILABLE", 503);
           fs.mkdirSync(path.dirname(file), { recursive: true });
-          memoryKey = crypto.randomBytes(32);
+          memoryKey = crypto2.randomBytes(32);
           fs.writeFileSync(target, memoryKey, { mode: 384, flag: "wx" });
           return memoryKey;
         }
         function seal(secret) {
           if (secretCodec) return secretCodec.seal(secret);
-          const iv = crypto.randomBytes(12), cipher = crypto.createCipheriv("aes-256-gcm", key(), iv);
+          const iv = crypto2.randomBytes(12), cipher = crypto2.createCipheriv("aes-256-gcm", key(), iv);
           const bytes = Buffer.concat([cipher.update(secret, "utf8"), cipher.final()]);
           return { iv: iv.toString("base64"), tag: cipher.getAuthTag().toString("base64"), data: bytes.toString("base64") };
         }
         function unseal(secret) {
           if (secretCodec) return secretCodec.unseal(secret);
           try {
-            const decipher = crypto.createDecipheriv("aes-256-gcm", key(), Buffer.from(secret.iv, "base64"));
+            const decipher = crypto2.createDecipheriv("aes-256-gcm", key(), Buffer.from(secret.iv, "base64"));
             decipher.setAuthTag(Buffer.from(secret.tag, "base64"));
             return Buffer.concat([decipher.update(Buffer.from(secret.data, "base64")), decipher.final()]).toString("utf8");
           } catch {
@@ -4076,7 +4809,7 @@ Return exactly one JSON object`);
             baseUrl,
             model,
             secret: raw ? seal(raw) : old.secret,
-            revision: same ? old.revision : crypto.randomUUID(),
+            revision: same ? old.revision : crypto2.randomUUID(),
             testedAt: same ? old.testedAt : null,
             updatedAt: now(),
             lastError: same ? old.lastError : null
@@ -4101,7 +4834,7 @@ Return exactly one JSON object`);
             defaultEngine: fallback.describe()
           });
         }
-        function accountCall(c, strategy, kind, startedAt, payload, error) {
+        function accountCall(c, strategy, kind, startedAt, payload, error, sampling) {
           const usage = usageOf(payload, c.provider);
           const next = structuredClone(state);
           const aggregate = next.usage[c.id] ||= { calls: 0, errors: 0, tests: 0, input: 0, output: 0, cached: 0, total: 0, missingUsageCalls: 0 };
@@ -4111,7 +4844,7 @@ Return exactly one JSON object`);
           if (usage) for (const k of ["input", "output", "cached", "total"]) aggregate[k] += usage[k];
           else aggregate.missingUsageCalls++;
           const event = {
-            id: crypto.randomUUID(),
+            id: crypto2.randomUUID(),
             connectionId: c.id,
             model: c.model,
             strategy,
@@ -4119,7 +4852,8 @@ Return exactly one JSON object`);
             at: now(),
             durationMs: now() - startedAt,
             usage,
-            error: error || null
+            error: error || null,
+            sampling
           };
           aggregate.last = event;
           next.recent = [...next.recent, event].slice(-200);
@@ -4132,7 +4866,7 @@ Return exactly one JSON object`);
         }
         async function invoke(c, prompt, input, options = {}, kind = "decision") {
           if (broken) throw fail("AI_STORAGE_FAILED", 503);
-          const started = now(), budget = Math.floor(Math.min(kind === "test" ? 15e3 : 8e3, (options.deadlineMs ?? Infinity) - (options.now || now)() - 250));
+          const started = now(), budget = Math.floor(Math.min(kind === "test" ? 15e3 : input.market.entry_mode === "precompute" ? 2e4 : 8e3, (options.deadlineMs ?? Infinity) - (options.now || now)() - 250));
           if (budget <= 0 || options.isCancelled?.()) throw Object.assign(fail("AI_DEADLINE_EXPIRED"), { requestStarted: false });
           const secret = unseal(c.secret);
           const isClaude = c.provider === "anthropic", isOpenai = c.provider === "openai";
@@ -4141,10 +4875,12 @@ Return exactly one JSON object`);
             messages: [{ role: "system", content: prompt }, { role: "user", content: JSON.stringify(input) }],
             response_format: { type: "json_object" },
             ...isOpenai ? { max_completion_tokens: 4096 } : { max_tokens: 1500 },
-            ...c.provider === "deepseek" ? { thinking: { type: "disabled" } } : {}
+            ...c.provider === "deepseek" ? deepseekNonThinking(c.model) : {}
           };
+          const sampling = samplingFor({ provider: c.provider, model: c.model, variance: input.policy?.decision_variance, kind, thinkingDisabled: body.thinking?.type === "disabled" });
+          Object.assign(body, sampling.parameters);
           let payload, raw, failure;
-          if (kind === "decision") options.onRequest?.({ provider: c.provider, body: structuredClone(body), responseContract: "strategy-v2" });
+          if (kind === "decision") options.onRequest?.({ provider: c.provider, body: structuredClone(body), sampling: sampling.audit, responseContract: "strategy-v2" });
           try {
             const response = await fetchImpl(`${c.baseUrl}/${isClaude ? "messages" : "chat/completions"}`, {
               method: "POST",
@@ -4168,9 +4904,9 @@ Return exactly one JSON object`);
           } catch (e) {
             failure = e.code?.startsWith?.("AI_") ? e : fail(e.name === "TimeoutError" || e.name === "AbortError" ? "AI_REQUEST_TIMEOUT" : "AI_REQUEST_FAILED", 503);
           }
-          const event = accountCall(c, input.policy?.strategy || null, kind, started, payload, failure?.code);
+          const event = accountCall(c, input.policy?.strategy || null, kind, started, payload, failure?.code, sampling.audit);
           if (failure) throw failure;
-          Object.defineProperty(raw, DECISION_META, { value: { engine: engine(c), usage: event, ...kind === "decision" ? { responseContract: "strategy-v2" } : {} } });
+          Object.defineProperty(raw, DECISION_META, { value: { engine: engine(c), sampling: sampling.audit, usage: event, ...kind === "decision" ? { responseContract: "strategy-v2" } : {} } });
           return raw;
         }
         async function testConnection(id, revision) {
@@ -4221,7 +4957,7 @@ Return exactly one JSON object`);
           commit({
             ...state,
             assignments: { ...state.assignments, [strategy]: connectionId },
-            assignmentVersions: { ...state.assignmentVersions, [strategy]: crypto.randomUUID() }
+            assignmentVersions: { ...state.assignmentVersions, [strategy]: crypto2.randomUUID() }
           });
           return snapshot();
         }
@@ -4247,7 +4983,7 @@ Return exactly one JSON object`);
             assertDecisionInputs(input);
             const cancelled = () => options.isCancelled?.() || input.policy.ai_connection_id === void 0 && state.assignmentVersions?.[input.policy.strategy] !== version || connectionFor(input) !== id || state.connections[id]?.revision !== c.revision || !state.connections[id]?.testedAt;
             const clock = options.now || now;
-            const deadlineMs = Math.min(options.deadlineMs ?? Infinity, input.market.data_timestamp + 1e4);
+            const deadlineMs = Math.min(options.deadlineMs ?? Infinity, input.market.data_timestamp + (input.market.entry_mode === "precompute" ? 45e3 : 1e4));
             for (let attempt = 0; ; attempt++) {
               if (cancelled()) throw fail("AI_CONFIGURATION_CHANGED");
               try {
@@ -4280,9 +5016,10 @@ Return exactly one JSON object`);
   // simulation-battles.js
   var require_simulation_battles = __commonJS({
     "simulation-battles.js"(exports, module) {
+      var globalControl = require_global_controls();
       var fs = require_fs();
       var path = require_path();
-      var crypto = require_crypto2();
+      var crypto2 = require_crypto2();
       var creationRequest = require_creation_request();
       var { atomicWriteJson } = require_atomic_json();
       var { PERIODS, createPredictionSimulation } = require_prediction_sim();
@@ -4342,7 +5079,7 @@ Return exactly one JSON object`);
           if (!id || seen.has(id)) id = `agent-${index + 1}`;
           while (seen.has(id)) id = `${id}-${index + 1}`;
           seen.add(id);
-          const normalized = normalizePolicy({ ...agent, id }, id);
+          const normalized = normalizePolicy({ ...agent, ...agent.cardSnapshot && value.capitalLimits && !agent.capitalLimits ? { capitalLimits: value.capitalLimits } : {}, id }, id);
           if (!supportsAsset(normalized.strategy, normalized.coin)) throw Object.assign(new Error("CHARACTER_ASSET_UNSUPPORTED"), { code: "CHARACTER_ASSET_UNSUPPORTED", statusCode: 400 });
           return {
             ...normalized,
@@ -4369,8 +5106,9 @@ Return exactly one JSON object`);
           asset: `${agents[0].coin}USDT`,
           period,
           roundMs: PERIODS[period],
-          emotionLevel,
-          actionUrgeLevel,
+          emotionLevel: globalControl.fromConfig(value).tilt,
+          actionUrgeLevel: globalControl.fromConfig(value).urge,
+          globalControls: globalControl.fromConfig(value),
           realtimeEntry,
           agents
         };
@@ -4386,7 +5124,7 @@ Return exactly one JSON object`);
           observations.set(key, { at: now(), failed: Boolean(cause) });
           const failures = [...observations.values()].filter((value) => value.failed).length;
           if (!cause || failures < 3 || failures / observations.size < 0.6) return;
-          outage = { id: crypto.randomUUID(), at: now(), code: cause.code, failures, reviews: observations.size };
+          outage = { id: crypto2.randomUUID(), at: now(), code: cause.code, failures, reviews: observations.size };
           for (const sim of simulations.values()) {
             try {
               sim.pauseForAiOutage(outage);
@@ -4420,7 +5158,8 @@ Return exactly one JSON object`);
           if (saved.version !== 1) throw new Error("INVALID_SIMULATION_STRATEGIES");
           policies = normalizeAgentPolicies(saved.agents);
         }
-        let records = [{ id: "default", name: "A / B / C", createdAt: null, config: normalizeBattleConfig({}, policies) }];
+        const hasLegacyLedger = Boolean(file && fs.existsSync(file));
+        let records = [{ id: "default", name: hasLegacyLedger ? "A / B / C" : "", placeholder: !hasLegacyLedger, createdAt: null, config: normalizeBattleConfig({}, policies) }];
         let creationRequests = {};
         if (registryFile && fs.existsSync(registryFile)) {
           const data = JSON.parse(fs.readFileSync(registryFile, "utf8"));
@@ -4468,13 +5207,14 @@ Return exactly one JSON object`);
             period: config.period,
             emotionLevel: config.emotionLevel,
             actionUrgeLevel: config.actionUrgeLevel,
+            globalControls: config.globalControls,
             realtimeEntry: config.realtimeEntry,
-            file: ledgerFile(record.id),
+            file: record.placeholder && !(file && fs.existsSync(ledgerFile(record.id))) ? void 0 : ledgerFile(record.id),
             now,
             leaseEnabled,
             pauseOnRestore,
             pauseOnError,
-            enabled: record.id !== "default" || !leaseEnabled && !pauseOnRestore,
+            enabled: !record.placeholder && (record.id !== "default" || !leaseEnabled && !pauseOnRestore),
             onChange: (change) => emitChange({ battleId: record.id, ...change })
           });
         };
@@ -4491,15 +5231,15 @@ Return exactly one JSON object`);
         }
         function snapshot(id = "default") {
           const record = records.find((battle) => battle.id === id);
-          return { ...get(id).snapshot(), id: record.id, name: record.name, createdAt: record.createdAt, placeholder: Boolean(record.placeholder) };
+          return { ...get(id).snapshot(), id: record.id, name: record.name, ...record.automaticSequence ? { automaticSequence: record.automaticSequence } : {}, createdAt: record.createdAt, placeholder: Boolean(record.placeholder) };
         }
         function liveSnapshot(id = "default") {
           const record = records.find((battle) => battle.id === id);
-          return { ...get(id).liveSnapshot(), id: record.id, name: record.name, createdAt: record.createdAt, placeholder: Boolean(record.placeholder), view: "live" };
+          return { ...get(id).liveSnapshot(), id: record.id, name: record.name, ...record.automaticSequence ? { automaticSequence: record.automaticSequence } : {}, createdAt: record.createdAt, placeholder: Boolean(record.placeholder), view: "live" };
         }
         function summary(id = "default") {
           const record = records.find((battle) => battle.id === id);
-          return { ...get(id).summary(), id: record.id, name: record.name, createdAt: record.createdAt, placeholder: Boolean(record.placeholder), view: "summary" };
+          return { ...get(id).summary(), id: record.id, name: record.name, ...record.automaticSequence ? { automaticSequence: record.automaticSequence } : {}, createdAt: record.createdAt, placeholder: Boolean(record.placeholder), view: "summary" };
         }
         function list() {
           return records.map((record) => snapshot(record.id));
@@ -4520,7 +5260,11 @@ Return exactly one JSON object`);
           if (prior) return prior;
           if (typeof (config.initialBalance ?? config.budget) === "number" && (config.initialBalance ?? config.budget) < 10) throw Object.assign(new Error("INVALID_BATTLE_BUDGET"), { code: "INVALID_BATTLE_BUDGET", statusCode: 400 });
           if (typeof name !== "string" || !name.trim() || name.trim().length > 40) throw Object.assign(new Error("Name must contain 1\u201340 characters"), { statusCode: 400 });
-          const record = { id: crypto.randomUUID(), name: name.trim(), createdAt: now(), config: normalizeBattleConfig(config, policies), ownerClientId: clientId || null };
+          const automaticSequence = config.automaticName === true ? Math.max(0, ...records.filter((r) => !r.placeholder).map((r, i) => r.automaticSequence || i + 1)) + 1 : null;
+          const frozenConfig = normalizeBattleConfig(config, policies);
+          if (frozenConfig.agents.some((a) => a.cardSnapshot && a.capitalVersion !== "SC-2")) throw Object.assign(Error("CARD_CAPITAL_VERSION_RETIRED"), { code: "CARD_CAPITAL_VERSION_RETIRED", statusCode: 422 });
+          if (frozenConfig.agents.some((a) => a.cardSnapshot && a.traitsVersion !== "CT-1")) throw Object.assign(Error("CARD_TRAITS_VERSION_RETIRED"), { code: "CARD_TRAITS_VERSION_RETIRED", statusCode: 422 });
+          const record = { id: crypto2.randomUUID(), name: name.trim(), createdAt: now(), ...automaticSequence ? { automaticSequence } : {}, config: frozenConfig, ownerClientId: clientId || null };
           if (record.config.initialBalance < 10) throw Object.assign(new Error("INVALID_BATTLE_BUDGET"), { code: "INVALID_BATTLE_BUDGET", statusCode: 400 });
           const sim = makeSimulation(record);
           sim.setEnabled(true);
@@ -4581,6 +5325,13 @@ Return exactly one JSON object`);
           }
           return snapshot(id);
         }
+        function setGlobalControls(value, id, revision) {
+          assertReady();
+          if (typeof id !== "string" || !id) throw Object.assign(Error("BATTLE_NOT_FOUND"), { code: "BATTLE_NOT_FOUND", statusCode: 404 });
+          if (records.find((item) => item.id === id)?.placeholder) throw Object.assign(Error("CREATE_BATTLE_FIRST"), { code: "CREATE_BATTLE_FIRST", statusCode: 409 });
+          get(id).setGlobalControls(value, revision);
+          return snapshot(id);
+        }
         function setEmotion(value, id = "default") {
           assertReady();
           if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 100) throw Object.assign(new Error("INVALID_BATTLE_EMOTION"), { statusCode: 400, code: "INVALID_BATTLE_EMOTION" });
@@ -4627,7 +5378,7 @@ Return exactly one JSON object`);
             const placeholder = { id: "default", name: "", placeholder: true, createdAt: null, config: normalizeBattleConfig({}, policies) };
             const next = id === "default" ? [placeholder, ...records.slice(1)] : records.filter((record) => record.id !== id);
             if (file) {
-              archive = path.join(path.dirname(file), "simulation-archives", crypto.randomUUID());
+              archive = path.join(path.dirname(file), "simulation-archives", crypto2.randomUUID());
               fs.mkdirSync(archive, { recursive: true });
               fs.writeFileSync(path.join(archive, "deleted-battle.json"), JSON.stringify({ version: 1, battle: target, snapshot: snapshot(id) }), { mode: 384 });
               const ledger = ledgerFile(id);
@@ -4663,7 +5414,7 @@ Return exactly one JSON object`);
             await Promise.allSettled([...activeTicks.values()]);
             const next = [{ id: "default", name: "", placeholder: true, createdAt: null, config: normalizeBattleConfig({}, policies) }];
             if (file) {
-              archive = path.join(path.dirname(file), "simulation-archives", crypto.randomUUID());
+              archive = path.join(path.dirname(file), "simulation-archives", crypto2.randomUUID());
               fs.mkdirSync(archive, { recursive: true });
               fs.writeFileSync(path.join(archive, "simulation-battles.json"), JSON.stringify({ version: 1, battles: records, creationRequests }), { mode: 384 });
               for (const record of records) {
@@ -4707,6 +5458,7 @@ Return exactly one JSON object`);
           touch,
           topUp,
           setEnabled,
+          setGlobalControls,
           setEmotion,
           setActionUrge,
           setRealtimeEntry,
@@ -4730,7 +5482,7 @@ Return exactly one JSON object`);
             if (resetting) return;
             const started = [];
             for (const [id, sim] of simulations) {
-              if (activeTicks.has(id)) continue;
+              if (activeTicks.has(id) || records.find((record) => record.id === id)?.placeholder) continue;
               const task = Promise.resolve().then(() => sim.tick()).finally(() => activeTicks.delete(id));
               activeTicks.set(id, task);
               started.push(task);
@@ -4806,6 +5558,17 @@ Return exactly one JSON object`);
         return {
           async marketFor(slot, symbol, duration) {
             return topic(slot, symbol, duration);
+          },
+          async previewBook(market, direction) {
+            const checked = parse(market.marketTopicId);
+            return {
+              tokenId: `${checked.marketTopicId}:${direction}`,
+              timestamp: now(),
+              source: PRACTICE,
+              simulated: true,
+              asks: [{ price: 0.5, size: 1e12 }],
+              bids: [{ price: 0.5, size: 1e12 }]
+            };
           },
           async detail(id) {
             const market = parse(id);
@@ -4922,6 +5685,7 @@ Return exactly one JSON object`);
           },
           detail: (id) => sourceFor(id).detail(id),
           book: (market, direction) => sourceFor(market.marketTopicId).book(market, direction),
+          previewBook: (market, direction) => isPractice(market.marketTopicId) ? practice.previewBook(market, direction) : official.book(market, direction),
           async quote(market, direction, amount, observedBook) {
             const tokenId = String(market.markets[0].outcomes.find((o) => o.name === (direction === "UP" ? "Up" : "Down")).tokenId);
             if (isPractice(market.marketTopicId)) {
@@ -5037,6 +5801,10 @@ Return exactly one JSON object`);
         result.volatility = n >= 21 ? { perMinutePct: std(c.slice(-20).map((v, i) => Math.log(v / c[n - 21 + i]))) * 100 } : null;
         const prior = rows.slice(-21, -1), high = Math.max(...prior.map((r) => r.high)), low = Math.min(...prior.map((r) => r.low));
         result.donchian = n >= 21 ? { upper: high, lower: low, close: last.close, breakout: last.close > high ? 1 : last.close < low ? -1 : 0 } : null;
+        if (n >= 22) {
+          const previousRange = rows.slice(-22, -2);
+          result.donchian.previous = { upper: Math.max(...previousRange.map((r) => r.high)), lower: Math.min(...previousRange.map((r) => r.low)), close: rows.at(-2).close };
+        }
         const flow5 = rows.slice(-5), total5 = sum(flow5.map((r) => r.volume));
         const buy5 = flow5.every((r) => Number.isFinite(r.takerBuyVolume)) ? sum(flow5.map((r) => r.takerBuyVolume)) : null;
         result.takerFlow = n >= 5 && total5 > 0 && buy5 !== null ? { buyRatio: buy5 / total5, netBase: 2 * buy5 - total5, totalBase: total5 } : null;
@@ -5247,7 +6015,7 @@ Return exactly one JSON object`);
     "paper-trading.js"(exports, module) {
       var fs = require_fs();
       var path = require_path();
-      var crypto = require_crypto2();
+      var crypto2 = require_crypto2();
       var SOURCE = "Binance Spot \xB7 data-api.binance.vision";
       function fail(code, statusCode = 409) {
         return Object.assign(new Error(code), { code, statusCode });
@@ -5384,7 +6152,7 @@ Return exactly one JSON object`);
             const quote = await price(symbol);
             if (!fresh(quote)) throw fail("MARKET_STALE", 503);
             const order = {
-              id: crypto.randomUUID(),
+              id: crypto2.randomUUID(),
               clientOrderId,
               symbol,
               direction,
@@ -5405,10 +6173,4844 @@ Return exactly one JSON object`);
     }
   });
 
+  // node_modules/@noble/curves/node_modules/@noble/hashes/_assert.js
+  var require_assert = __commonJS({
+    "node_modules/@noble/curves/node_modules/@noble/hashes/_assert.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.output = exports.exists = exports.hash = exports.bytes = exports.bool = exports.number = void 0;
+      function number(n) {
+        if (!Number.isSafeInteger(n) || n < 0)
+          throw new Error(`Wrong positive integer: ${n}`);
+      }
+      exports.number = number;
+      function bool(b) {
+        if (typeof b !== "boolean")
+          throw new Error(`Expected boolean, not ${b}`);
+      }
+      exports.bool = bool;
+      function bytes(b, ...lengths) {
+        if (!(b instanceof Uint8Array))
+          throw new Error("Expected Uint8Array");
+        if (lengths.length > 0 && !lengths.includes(b.length))
+          throw new Error(`Expected Uint8Array of length ${lengths}, not of length=${b.length}`);
+      }
+      exports.bytes = bytes;
+      function hash(hash2) {
+        if (typeof hash2 !== "function" || typeof hash2.create !== "function")
+          throw new Error("Hash should be wrapped by utils.wrapConstructor");
+        number(hash2.outputLen);
+        number(hash2.blockLen);
+      }
+      exports.hash = hash;
+      function exists(instance, checkFinished = true) {
+        if (instance.destroyed)
+          throw new Error("Hash instance has been destroyed");
+        if (checkFinished && instance.finished)
+          throw new Error("Hash#digest() has already been called");
+      }
+      exports.exists = exists;
+      function output(out, instance) {
+        bytes(out);
+        const min = instance.outputLen;
+        if (out.length < min) {
+          throw new Error(`digestInto() expects output buffer of length at least ${min}`);
+        }
+      }
+      exports.output = output;
+      var assert = { number, bool, bytes, hash, exists, output };
+      exports.default = assert;
+    }
+  });
+
+  // node_modules/@noble/curves/node_modules/@noble/hashes/crypto.js
+  var require_crypto3 = __commonJS({
+    "node_modules/@noble/curves/node_modules/@noble/hashes/crypto.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.crypto = void 0;
+      exports.crypto = typeof globalThis === "object" && "crypto" in globalThis ? globalThis.crypto : void 0;
+    }
+  });
+
+  // node_modules/@noble/curves/node_modules/@noble/hashes/utils.js
+  var require_utils2 = __commonJS({
+    "node_modules/@noble/curves/node_modules/@noble/hashes/utils.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.randomBytes = exports.wrapXOFConstructorWithOpts = exports.wrapConstructorWithOpts = exports.wrapConstructor = exports.checkOpts = exports.Hash = exports.concatBytes = exports.toBytes = exports.utf8ToBytes = exports.asyncLoop = exports.nextTick = exports.hexToBytes = exports.bytesToHex = exports.isLE = exports.rotr = exports.createView = exports.u32 = exports.u8 = void 0;
+      var crypto_1 = require_crypto3();
+      var u8a = (a) => a instanceof Uint8Array;
+      var u8 = (arr) => new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
+      exports.u8 = u8;
+      var u32 = (arr) => new Uint32Array(arr.buffer, arr.byteOffset, Math.floor(arr.byteLength / 4));
+      exports.u32 = u32;
+      var createView = (arr) => new DataView(arr.buffer, arr.byteOffset, arr.byteLength);
+      exports.createView = createView;
+      var rotr = (word, shift) => word << 32 - shift | word >>> shift;
+      exports.rotr = rotr;
+      exports.isLE = new Uint8Array(new Uint32Array([287454020]).buffer)[0] === 68;
+      if (!exports.isLE)
+        throw new Error("Non little-endian hardware is not supported");
+      var hexes = /* @__PURE__ */ Array.from({ length: 256 }, (_, i) => i.toString(16).padStart(2, "0"));
+      function bytesToHex(bytes) {
+        if (!u8a(bytes))
+          throw new Error("Uint8Array expected");
+        let hex = "";
+        for (let i = 0; i < bytes.length; i++) {
+          hex += hexes[bytes[i]];
+        }
+        return hex;
+      }
+      exports.bytesToHex = bytesToHex;
+      function hexToBytes(hex) {
+        if (typeof hex !== "string")
+          throw new Error("hex string expected, got " + typeof hex);
+        const len = hex.length;
+        if (len % 2)
+          throw new Error("padded hex string expected, got unpadded hex of length " + len);
+        const array = new Uint8Array(len / 2);
+        for (let i = 0; i < array.length; i++) {
+          const j = i * 2;
+          const hexByte = hex.slice(j, j + 2);
+          const byte = Number.parseInt(hexByte, 16);
+          if (Number.isNaN(byte) || byte < 0)
+            throw new Error("Invalid byte sequence");
+          array[i] = byte;
+        }
+        return array;
+      }
+      exports.hexToBytes = hexToBytes;
+      var nextTick = async () => {
+      };
+      exports.nextTick = nextTick;
+      async function asyncLoop(iters, tick, cb) {
+        let ts = Date.now();
+        for (let i = 0; i < iters; i++) {
+          cb(i);
+          const diff = Date.now() - ts;
+          if (diff >= 0 && diff < tick)
+            continue;
+          await (0, exports.nextTick)();
+          ts += diff;
+        }
+      }
+      exports.asyncLoop = asyncLoop;
+      function utf8ToBytes(str) {
+        if (typeof str !== "string")
+          throw new Error(`utf8ToBytes expected string, got ${typeof str}`);
+        return new Uint8Array(new TextEncoder().encode(str));
+      }
+      exports.utf8ToBytes = utf8ToBytes;
+      function toBytes(data) {
+        if (typeof data === "string")
+          data = utf8ToBytes(data);
+        if (!u8a(data))
+          throw new Error(`expected Uint8Array, got ${typeof data}`);
+        return data;
+      }
+      exports.toBytes = toBytes;
+      function concatBytes(...arrays) {
+        const r = new Uint8Array(arrays.reduce((sum, a) => sum + a.length, 0));
+        let pad = 0;
+        arrays.forEach((a) => {
+          if (!u8a(a))
+            throw new Error("Uint8Array expected");
+          r.set(a, pad);
+          pad += a.length;
+        });
+        return r;
+      }
+      exports.concatBytes = concatBytes;
+      var Hash = class {
+        // Safe version that clones internal state
+        clone() {
+          return this._cloneInto();
+        }
+      };
+      exports.Hash = Hash;
+      var toStr = {}.toString;
+      function checkOpts(defaults, opts) {
+        if (opts !== void 0 && toStr.call(opts) !== "[object Object]")
+          throw new Error("Options should be object or undefined");
+        const merged = Object.assign(defaults, opts);
+        return merged;
+      }
+      exports.checkOpts = checkOpts;
+      function wrapConstructor(hashCons) {
+        const hashC = (msg) => hashCons().update(toBytes(msg)).digest();
+        const tmp = hashCons();
+        hashC.outputLen = tmp.outputLen;
+        hashC.blockLen = tmp.blockLen;
+        hashC.create = () => hashCons();
+        return hashC;
+      }
+      exports.wrapConstructor = wrapConstructor;
+      function wrapConstructorWithOpts(hashCons) {
+        const hashC = (msg, opts) => hashCons(opts).update(toBytes(msg)).digest();
+        const tmp = hashCons({});
+        hashC.outputLen = tmp.outputLen;
+        hashC.blockLen = tmp.blockLen;
+        hashC.create = (opts) => hashCons(opts);
+        return hashC;
+      }
+      exports.wrapConstructorWithOpts = wrapConstructorWithOpts;
+      function wrapXOFConstructorWithOpts(hashCons) {
+        const hashC = (msg, opts) => hashCons(opts).update(toBytes(msg)).digest();
+        const tmp = hashCons({});
+        hashC.outputLen = tmp.outputLen;
+        hashC.blockLen = tmp.blockLen;
+        hashC.create = (opts) => hashCons(opts);
+        return hashC;
+      }
+      exports.wrapXOFConstructorWithOpts = wrapXOFConstructorWithOpts;
+      function randomBytes(bytesLength = 32) {
+        if (crypto_1.crypto && typeof crypto_1.crypto.getRandomValues === "function") {
+          return crypto_1.crypto.getRandomValues(new Uint8Array(bytesLength));
+        }
+        throw new Error("crypto.getRandomValues must be defined");
+      }
+      exports.randomBytes = randomBytes;
+    }
+  });
+
+  // node_modules/@noble/curves/node_modules/@noble/hashes/_sha2.js
+  var require_sha22 = __commonJS({
+    "node_modules/@noble/curves/node_modules/@noble/hashes/_sha2.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.SHA2 = void 0;
+      var _assert_js_1 = require_assert();
+      var utils_js_1 = require_utils2();
+      function setBigUint64(view, byteOffset, value, isLE) {
+        if (typeof view.setBigUint64 === "function")
+          return view.setBigUint64(byteOffset, value, isLE);
+        const _32n = BigInt(32);
+        const _u32_max = BigInt(4294967295);
+        const wh = Number(value >> _32n & _u32_max);
+        const wl = Number(value & _u32_max);
+        const h = isLE ? 4 : 0;
+        const l = isLE ? 0 : 4;
+        view.setUint32(byteOffset + h, wh, isLE);
+        view.setUint32(byteOffset + l, wl, isLE);
+      }
+      var SHA2 = class extends utils_js_1.Hash {
+        constructor(blockLen, outputLen, padOffset, isLE) {
+          super();
+          this.blockLen = blockLen;
+          this.outputLen = outputLen;
+          this.padOffset = padOffset;
+          this.isLE = isLE;
+          this.finished = false;
+          this.length = 0;
+          this.pos = 0;
+          this.destroyed = false;
+          this.buffer = new Uint8Array(blockLen);
+          this.view = (0, utils_js_1.createView)(this.buffer);
+        }
+        update(data) {
+          (0, _assert_js_1.exists)(this);
+          const { view, buffer, blockLen } = this;
+          data = (0, utils_js_1.toBytes)(data);
+          const len = data.length;
+          for (let pos = 0; pos < len; ) {
+            const take = Math.min(blockLen - this.pos, len - pos);
+            if (take === blockLen) {
+              const dataView = (0, utils_js_1.createView)(data);
+              for (; blockLen <= len - pos; pos += blockLen)
+                this.process(dataView, pos);
+              continue;
+            }
+            buffer.set(data.subarray(pos, pos + take), this.pos);
+            this.pos += take;
+            pos += take;
+            if (this.pos === blockLen) {
+              this.process(view, 0);
+              this.pos = 0;
+            }
+          }
+          this.length += data.length;
+          this.roundClean();
+          return this;
+        }
+        digestInto(out) {
+          (0, _assert_js_1.exists)(this);
+          (0, _assert_js_1.output)(out, this);
+          this.finished = true;
+          const { buffer, view, blockLen, isLE } = this;
+          let { pos } = this;
+          buffer[pos++] = 128;
+          this.buffer.subarray(pos).fill(0);
+          if (this.padOffset > blockLen - pos) {
+            this.process(view, 0);
+            pos = 0;
+          }
+          for (let i = pos; i < blockLen; i++)
+            buffer[i] = 0;
+          setBigUint64(view, blockLen - 8, BigInt(this.length * 8), isLE);
+          this.process(view, 0);
+          const oview = (0, utils_js_1.createView)(out);
+          const len = this.outputLen;
+          if (len % 4)
+            throw new Error("_sha2: outputLen should be aligned to 32bit");
+          const outLen = len / 4;
+          const state = this.get();
+          if (outLen > state.length)
+            throw new Error("_sha2: outputLen bigger than state");
+          for (let i = 0; i < outLen; i++)
+            oview.setUint32(4 * i, state[i], isLE);
+        }
+        digest() {
+          const { buffer, outputLen } = this;
+          this.digestInto(buffer);
+          const res = buffer.slice(0, outputLen);
+          this.destroy();
+          return res;
+        }
+        _cloneInto(to) {
+          to || (to = new this.constructor());
+          to.set(...this.get());
+          const { blockLen, buffer, length, finished, destroyed, pos } = this;
+          to.length = length;
+          to.pos = pos;
+          to.finished = finished;
+          to.destroyed = destroyed;
+          if (length % blockLen)
+            to.buffer.set(buffer);
+          return to;
+        }
+      };
+      exports.SHA2 = SHA2;
+    }
+  });
+
+  // node_modules/@noble/curves/node_modules/@noble/hashes/sha256.js
+  var require_sha2562 = __commonJS({
+    "node_modules/@noble/curves/node_modules/@noble/hashes/sha256.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.sha224 = exports.sha256 = void 0;
+      var _sha2_js_1 = require_sha22();
+      var utils_js_1 = require_utils2();
+      var Chi = (a, b, c) => a & b ^ ~a & c;
+      var Maj = (a, b, c) => a & b ^ a & c ^ b & c;
+      var SHA256_K = /* @__PURE__ */ new Uint32Array([
+        1116352408,
+        1899447441,
+        3049323471,
+        3921009573,
+        961987163,
+        1508970993,
+        2453635748,
+        2870763221,
+        3624381080,
+        310598401,
+        607225278,
+        1426881987,
+        1925078388,
+        2162078206,
+        2614888103,
+        3248222580,
+        3835390401,
+        4022224774,
+        264347078,
+        604807628,
+        770255983,
+        1249150122,
+        1555081692,
+        1996064986,
+        2554220882,
+        2821834349,
+        2952996808,
+        3210313671,
+        3336571891,
+        3584528711,
+        113926993,
+        338241895,
+        666307205,
+        773529912,
+        1294757372,
+        1396182291,
+        1695183700,
+        1986661051,
+        2177026350,
+        2456956037,
+        2730485921,
+        2820302411,
+        3259730800,
+        3345764771,
+        3516065817,
+        3600352804,
+        4094571909,
+        275423344,
+        430227734,
+        506948616,
+        659060556,
+        883997877,
+        958139571,
+        1322822218,
+        1537002063,
+        1747873779,
+        1955562222,
+        2024104815,
+        2227730452,
+        2361852424,
+        2428436474,
+        2756734187,
+        3204031479,
+        3329325298
+      ]);
+      var IV = /* @__PURE__ */ new Uint32Array([
+        1779033703,
+        3144134277,
+        1013904242,
+        2773480762,
+        1359893119,
+        2600822924,
+        528734635,
+        1541459225
+      ]);
+      var SHA256_W = /* @__PURE__ */ new Uint32Array(64);
+      var SHA256 = class extends _sha2_js_1.SHA2 {
+        constructor() {
+          super(64, 32, 8, false);
+          this.A = IV[0] | 0;
+          this.B = IV[1] | 0;
+          this.C = IV[2] | 0;
+          this.D = IV[3] | 0;
+          this.E = IV[4] | 0;
+          this.F = IV[5] | 0;
+          this.G = IV[6] | 0;
+          this.H = IV[7] | 0;
+        }
+        get() {
+          const { A, B, C, D, E, F, G, H } = this;
+          return [A, B, C, D, E, F, G, H];
+        }
+        // prettier-ignore
+        set(A, B, C, D, E, F, G, H) {
+          this.A = A | 0;
+          this.B = B | 0;
+          this.C = C | 0;
+          this.D = D | 0;
+          this.E = E | 0;
+          this.F = F | 0;
+          this.G = G | 0;
+          this.H = H | 0;
+        }
+        process(view, offset) {
+          for (let i = 0; i < 16; i++, offset += 4)
+            SHA256_W[i] = view.getUint32(offset, false);
+          for (let i = 16; i < 64; i++) {
+            const W15 = SHA256_W[i - 15];
+            const W2 = SHA256_W[i - 2];
+            const s0 = (0, utils_js_1.rotr)(W15, 7) ^ (0, utils_js_1.rotr)(W15, 18) ^ W15 >>> 3;
+            const s1 = (0, utils_js_1.rotr)(W2, 17) ^ (0, utils_js_1.rotr)(W2, 19) ^ W2 >>> 10;
+            SHA256_W[i] = s1 + SHA256_W[i - 7] + s0 + SHA256_W[i - 16] | 0;
+          }
+          let { A, B, C, D, E, F, G, H } = this;
+          for (let i = 0; i < 64; i++) {
+            const sigma1 = (0, utils_js_1.rotr)(E, 6) ^ (0, utils_js_1.rotr)(E, 11) ^ (0, utils_js_1.rotr)(E, 25);
+            const T1 = H + sigma1 + Chi(E, F, G) + SHA256_K[i] + SHA256_W[i] | 0;
+            const sigma0 = (0, utils_js_1.rotr)(A, 2) ^ (0, utils_js_1.rotr)(A, 13) ^ (0, utils_js_1.rotr)(A, 22);
+            const T2 = sigma0 + Maj(A, B, C) | 0;
+            H = G;
+            G = F;
+            F = E;
+            E = D + T1 | 0;
+            D = C;
+            C = B;
+            B = A;
+            A = T1 + T2 | 0;
+          }
+          A = A + this.A | 0;
+          B = B + this.B | 0;
+          C = C + this.C | 0;
+          D = D + this.D | 0;
+          E = E + this.E | 0;
+          F = F + this.F | 0;
+          G = G + this.G | 0;
+          H = H + this.H | 0;
+          this.set(A, B, C, D, E, F, G, H);
+        }
+        roundClean() {
+          SHA256_W.fill(0);
+        }
+        destroy() {
+          this.set(0, 0, 0, 0, 0, 0, 0, 0);
+          this.buffer.fill(0);
+        }
+      };
+      var SHA224 = class extends SHA256 {
+        constructor() {
+          super();
+          this.A = 3238371032 | 0;
+          this.B = 914150663 | 0;
+          this.C = 812702999 | 0;
+          this.D = 4144912697 | 0;
+          this.E = 4290775857 | 0;
+          this.F = 1750603025 | 0;
+          this.G = 1694076839 | 0;
+          this.H = 3204075428 | 0;
+          this.outputLen = 28;
+        }
+      };
+      exports.sha256 = (0, utils_js_1.wrapConstructor)(() => new SHA256());
+      exports.sha224 = (0, utils_js_1.wrapConstructor)(() => new SHA224());
+    }
+  });
+
+  // node_modules/@noble/curves/abstract/utils.js
+  var require_utils3 = __commonJS({
+    "node_modules/@noble/curves/abstract/utils.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.validateObject = exports.createHmacDrbg = exports.bitMask = exports.bitSet = exports.bitGet = exports.bitLen = exports.utf8ToBytes = exports.equalBytes = exports.concatBytes = exports.ensureBytes = exports.numberToVarBytesBE = exports.numberToBytesLE = exports.numberToBytesBE = exports.bytesToNumberLE = exports.bytesToNumberBE = exports.hexToBytes = exports.hexToNumber = exports.numberToHexUnpadded = exports.bytesToHex = void 0;
+      var _0n = BigInt(0);
+      var _1n = BigInt(1);
+      var _2n = BigInt(2);
+      var u8a = (a) => a instanceof Uint8Array;
+      var hexes = /* @__PURE__ */ Array.from({ length: 256 }, (_, i) => i.toString(16).padStart(2, "0"));
+      function bytesToHex(bytes) {
+        if (!u8a(bytes))
+          throw new Error("Uint8Array expected");
+        let hex = "";
+        for (let i = 0; i < bytes.length; i++) {
+          hex += hexes[bytes[i]];
+        }
+        return hex;
+      }
+      exports.bytesToHex = bytesToHex;
+      function numberToHexUnpadded(num) {
+        const hex = num.toString(16);
+        return hex.length & 1 ? `0${hex}` : hex;
+      }
+      exports.numberToHexUnpadded = numberToHexUnpadded;
+      function hexToNumber(hex) {
+        if (typeof hex !== "string")
+          throw new Error("hex string expected, got " + typeof hex);
+        return BigInt(hex === "" ? "0" : `0x${hex}`);
+      }
+      exports.hexToNumber = hexToNumber;
+      function hexToBytes(hex) {
+        if (typeof hex !== "string")
+          throw new Error("hex string expected, got " + typeof hex);
+        const len = hex.length;
+        if (len % 2)
+          throw new Error("padded hex string expected, got unpadded hex of length " + len);
+        const array = new Uint8Array(len / 2);
+        for (let i = 0; i < array.length; i++) {
+          const j = i * 2;
+          const hexByte = hex.slice(j, j + 2);
+          const byte = Number.parseInt(hexByte, 16);
+          if (Number.isNaN(byte) || byte < 0)
+            throw new Error("Invalid byte sequence");
+          array[i] = byte;
+        }
+        return array;
+      }
+      exports.hexToBytes = hexToBytes;
+      function bytesToNumberBE(bytes) {
+        return hexToNumber(bytesToHex(bytes));
+      }
+      exports.bytesToNumberBE = bytesToNumberBE;
+      function bytesToNumberLE(bytes) {
+        if (!u8a(bytes))
+          throw new Error("Uint8Array expected");
+        return hexToNumber(bytesToHex(Uint8Array.from(bytes).reverse()));
+      }
+      exports.bytesToNumberLE = bytesToNumberLE;
+      function numberToBytesBE(n, len) {
+        return hexToBytes(n.toString(16).padStart(len * 2, "0"));
+      }
+      exports.numberToBytesBE = numberToBytesBE;
+      function numberToBytesLE(n, len) {
+        return numberToBytesBE(n, len).reverse();
+      }
+      exports.numberToBytesLE = numberToBytesLE;
+      function numberToVarBytesBE(n) {
+        return hexToBytes(numberToHexUnpadded(n));
+      }
+      exports.numberToVarBytesBE = numberToVarBytesBE;
+      function ensureBytes(title, hex, expectedLength) {
+        let res;
+        if (typeof hex === "string") {
+          try {
+            res = hexToBytes(hex);
+          } catch (e) {
+            throw new Error(`${title} must be valid hex string, got "${hex}". Cause: ${e}`);
+          }
+        } else if (u8a(hex)) {
+          res = Uint8Array.from(hex);
+        } else {
+          throw new Error(`${title} must be hex string or Uint8Array`);
+        }
+        const len = res.length;
+        if (typeof expectedLength === "number" && len !== expectedLength)
+          throw new Error(`${title} expected ${expectedLength} bytes, got ${len}`);
+        return res;
+      }
+      exports.ensureBytes = ensureBytes;
+      function concatBytes(...arrays) {
+        const r = new Uint8Array(arrays.reduce((sum, a) => sum + a.length, 0));
+        let pad = 0;
+        arrays.forEach((a) => {
+          if (!u8a(a))
+            throw new Error("Uint8Array expected");
+          r.set(a, pad);
+          pad += a.length;
+        });
+        return r;
+      }
+      exports.concatBytes = concatBytes;
+      function equalBytes(b1, b2) {
+        if (b1.length !== b2.length)
+          return false;
+        for (let i = 0; i < b1.length; i++)
+          if (b1[i] !== b2[i])
+            return false;
+        return true;
+      }
+      exports.equalBytes = equalBytes;
+      function utf8ToBytes(str) {
+        if (typeof str !== "string")
+          throw new Error(`utf8ToBytes expected string, got ${typeof str}`);
+        return new Uint8Array(new TextEncoder().encode(str));
+      }
+      exports.utf8ToBytes = utf8ToBytes;
+      function bitLen(n) {
+        let len;
+        for (len = 0; n > _0n; n >>= _1n, len += 1)
+          ;
+        return len;
+      }
+      exports.bitLen = bitLen;
+      function bitGet(n, pos) {
+        return n >> BigInt(pos) & _1n;
+      }
+      exports.bitGet = bitGet;
+      var bitSet = (n, pos, value) => {
+        return n | (value ? _1n : _0n) << BigInt(pos);
+      };
+      exports.bitSet = bitSet;
+      var bitMask = (n) => (_2n << BigInt(n - 1)) - _1n;
+      exports.bitMask = bitMask;
+      var u8n = (data) => new Uint8Array(data);
+      var u8fr = (arr) => Uint8Array.from(arr);
+      function createHmacDrbg(hashLen, qByteLen, hmacFn) {
+        if (typeof hashLen !== "number" || hashLen < 2)
+          throw new Error("hashLen must be a number");
+        if (typeof qByteLen !== "number" || qByteLen < 2)
+          throw new Error("qByteLen must be a number");
+        if (typeof hmacFn !== "function")
+          throw new Error("hmacFn must be a function");
+        let v = u8n(hashLen);
+        let k = u8n(hashLen);
+        let i = 0;
+        const reset = () => {
+          v.fill(1);
+          k.fill(0);
+          i = 0;
+        };
+        const h = (...b) => hmacFn(k, v, ...b);
+        const reseed = (seed = u8n()) => {
+          k = h(u8fr([0]), seed);
+          v = h();
+          if (seed.length === 0)
+            return;
+          k = h(u8fr([1]), seed);
+          v = h();
+        };
+        const gen = () => {
+          if (i++ >= 1e3)
+            throw new Error("drbg: tried 1000 values");
+          let len = 0;
+          const out = [];
+          while (len < qByteLen) {
+            v = h();
+            const sl = v.slice();
+            out.push(sl);
+            len += v.length;
+          }
+          return concatBytes(...out);
+        };
+        const genUntil = (seed, pred) => {
+          reset();
+          reseed(seed);
+          let res = void 0;
+          while (!(res = pred(gen())))
+            reseed();
+          reset();
+          return res;
+        };
+        return genUntil;
+      }
+      exports.createHmacDrbg = createHmacDrbg;
+      var validatorFns = {
+        bigint: (val) => typeof val === "bigint",
+        function: (val) => typeof val === "function",
+        boolean: (val) => typeof val === "boolean",
+        string: (val) => typeof val === "string",
+        stringOrUint8Array: (val) => typeof val === "string" || val instanceof Uint8Array,
+        isSafeInteger: (val) => Number.isSafeInteger(val),
+        array: (val) => Array.isArray(val),
+        field: (val, object) => object.Fp.isValid(val),
+        hash: (val) => typeof val === "function" && Number.isSafeInteger(val.outputLen)
+      };
+      function validateObject(object, validators, optValidators = {}) {
+        const checkField = (fieldName, type, isOptional) => {
+          const checkVal = validatorFns[type];
+          if (typeof checkVal !== "function")
+            throw new Error(`Invalid validator "${type}", expected function`);
+          const val = object[fieldName];
+          if (isOptional && val === void 0)
+            return;
+          if (!checkVal(val, object)) {
+            throw new Error(`Invalid param ${String(fieldName)}=${val} (${typeof val}), expected ${type}`);
+          }
+        };
+        for (const [fieldName, type] of Object.entries(validators))
+          checkField(fieldName, type, false);
+        for (const [fieldName, type] of Object.entries(optValidators))
+          checkField(fieldName, type, true);
+        return object;
+      }
+      exports.validateObject = validateObject;
+    }
+  });
+
+  // node_modules/@noble/curves/abstract/modular.js
+  var require_modular = __commonJS({
+    "node_modules/@noble/curves/abstract/modular.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.mapHashToField = exports.getMinHashLength = exports.getFieldBytesLength = exports.hashToPrivateScalar = exports.FpSqrtEven = exports.FpSqrtOdd = exports.Field = exports.nLength = exports.FpIsSquare = exports.FpDiv = exports.FpInvertBatch = exports.FpPow = exports.validateField = exports.isNegativeLE = exports.FpSqrt = exports.tonelliShanks = exports.invert = exports.pow2 = exports.pow = exports.mod = void 0;
+      var utils_js_1 = require_utils3();
+      var _0n = BigInt(0);
+      var _1n = BigInt(1);
+      var _2n = BigInt(2);
+      var _3n = BigInt(3);
+      var _4n = BigInt(4);
+      var _5n = BigInt(5);
+      var _8n = BigInt(8);
+      var _9n = BigInt(9);
+      var _16n = BigInt(16);
+      function mod(a, b) {
+        const result = a % b;
+        return result >= _0n ? result : b + result;
+      }
+      exports.mod = mod;
+      function pow(num, power, modulo) {
+        if (modulo <= _0n || power < _0n)
+          throw new Error("Expected power/modulo > 0");
+        if (modulo === _1n)
+          return _0n;
+        let res = _1n;
+        while (power > _0n) {
+          if (power & _1n)
+            res = res * num % modulo;
+          num = num * num % modulo;
+          power >>= _1n;
+        }
+        return res;
+      }
+      exports.pow = pow;
+      function pow2(x, power, modulo) {
+        let res = x;
+        while (power-- > _0n) {
+          res *= res;
+          res %= modulo;
+        }
+        return res;
+      }
+      exports.pow2 = pow2;
+      function invert(number, modulo) {
+        if (number === _0n || modulo <= _0n) {
+          throw new Error(`invert: expected positive integers, got n=${number} mod=${modulo}`);
+        }
+        let a = mod(number, modulo);
+        let b = modulo;
+        let x = _0n, y = _1n, u = _1n, v = _0n;
+        while (a !== _0n) {
+          const q = b / a;
+          const r = b % a;
+          const m = x - u * q;
+          const n = y - v * q;
+          b = a, a = r, x = u, y = v, u = m, v = n;
+        }
+        const gcd = b;
+        if (gcd !== _1n)
+          throw new Error("invert: does not exist");
+        return mod(x, modulo);
+      }
+      exports.invert = invert;
+      function tonelliShanks(P) {
+        const legendreC = (P - _1n) / _2n;
+        let Q, S, Z;
+        for (Q = P - _1n, S = 0; Q % _2n === _0n; Q /= _2n, S++)
+          ;
+        for (Z = _2n; Z < P && pow(Z, legendreC, P) !== P - _1n; Z++)
+          ;
+        if (S === 1) {
+          const p1div4 = (P + _1n) / _4n;
+          return function tonelliFast(Fp, n) {
+            const root = Fp.pow(n, p1div4);
+            if (!Fp.eql(Fp.sqr(root), n))
+              throw new Error("Cannot find square root");
+            return root;
+          };
+        }
+        const Q1div2 = (Q + _1n) / _2n;
+        return function tonelliSlow(Fp, n) {
+          if (Fp.pow(n, legendreC) === Fp.neg(Fp.ONE))
+            throw new Error("Cannot find square root");
+          let r = S;
+          let g = Fp.pow(Fp.mul(Fp.ONE, Z), Q);
+          let x = Fp.pow(n, Q1div2);
+          let b = Fp.pow(n, Q);
+          while (!Fp.eql(b, Fp.ONE)) {
+            if (Fp.eql(b, Fp.ZERO))
+              return Fp.ZERO;
+            let m = 1;
+            for (let t2 = Fp.sqr(b); m < r; m++) {
+              if (Fp.eql(t2, Fp.ONE))
+                break;
+              t2 = Fp.sqr(t2);
+            }
+            const ge = Fp.pow(g, _1n << BigInt(r - m - 1));
+            g = Fp.sqr(ge);
+            x = Fp.mul(x, ge);
+            b = Fp.mul(b, g);
+            r = m;
+          }
+          return x;
+        };
+      }
+      exports.tonelliShanks = tonelliShanks;
+      function FpSqrt(P) {
+        if (P % _4n === _3n) {
+          const p1div4 = (P + _1n) / _4n;
+          return function sqrt3mod4(Fp, n) {
+            const root = Fp.pow(n, p1div4);
+            if (!Fp.eql(Fp.sqr(root), n))
+              throw new Error("Cannot find square root");
+            return root;
+          };
+        }
+        if (P % _8n === _5n) {
+          const c1 = (P - _5n) / _8n;
+          return function sqrt5mod8(Fp, n) {
+            const n2 = Fp.mul(n, _2n);
+            const v = Fp.pow(n2, c1);
+            const nv = Fp.mul(n, v);
+            const i = Fp.mul(Fp.mul(nv, _2n), v);
+            const root = Fp.mul(nv, Fp.sub(i, Fp.ONE));
+            if (!Fp.eql(Fp.sqr(root), n))
+              throw new Error("Cannot find square root");
+            return root;
+          };
+        }
+        if (P % _16n === _9n) {
+        }
+        return tonelliShanks(P);
+      }
+      exports.FpSqrt = FpSqrt;
+      var isNegativeLE = (num, modulo) => (mod(num, modulo) & _1n) === _1n;
+      exports.isNegativeLE = isNegativeLE;
+      var FIELD_FIELDS = [
+        "create",
+        "isValid",
+        "is0",
+        "neg",
+        "inv",
+        "sqrt",
+        "sqr",
+        "eql",
+        "add",
+        "sub",
+        "mul",
+        "pow",
+        "div",
+        "addN",
+        "subN",
+        "mulN",
+        "sqrN"
+      ];
+      function validateField(field) {
+        const initial = {
+          ORDER: "bigint",
+          MASK: "bigint",
+          BYTES: "isSafeInteger",
+          BITS: "isSafeInteger"
+        };
+        const opts = FIELD_FIELDS.reduce((map, val) => {
+          map[val] = "function";
+          return map;
+        }, initial);
+        return (0, utils_js_1.validateObject)(field, opts);
+      }
+      exports.validateField = validateField;
+      function FpPow(f, num, power) {
+        if (power < _0n)
+          throw new Error("Expected power > 0");
+        if (power === _0n)
+          return f.ONE;
+        if (power === _1n)
+          return num;
+        let p = f.ONE;
+        let d = num;
+        while (power > _0n) {
+          if (power & _1n)
+            p = f.mul(p, d);
+          d = f.sqr(d);
+          power >>= _1n;
+        }
+        return p;
+      }
+      exports.FpPow = FpPow;
+      function FpInvertBatch(f, nums) {
+        const tmp = new Array(nums.length);
+        const lastMultiplied = nums.reduce((acc, num, i) => {
+          if (f.is0(num))
+            return acc;
+          tmp[i] = acc;
+          return f.mul(acc, num);
+        }, f.ONE);
+        const inverted = f.inv(lastMultiplied);
+        nums.reduceRight((acc, num, i) => {
+          if (f.is0(num))
+            return acc;
+          tmp[i] = f.mul(acc, tmp[i]);
+          return f.mul(acc, num);
+        }, inverted);
+        return tmp;
+      }
+      exports.FpInvertBatch = FpInvertBatch;
+      function FpDiv(f, lhs, rhs) {
+        return f.mul(lhs, typeof rhs === "bigint" ? invert(rhs, f.ORDER) : f.inv(rhs));
+      }
+      exports.FpDiv = FpDiv;
+      function FpIsSquare(f) {
+        const legendreConst = (f.ORDER - _1n) / _2n;
+        return (x) => {
+          const p = f.pow(x, legendreConst);
+          return f.eql(p, f.ZERO) || f.eql(p, f.ONE);
+        };
+      }
+      exports.FpIsSquare = FpIsSquare;
+      function nLength(n, nBitLength) {
+        const _nBitLength = nBitLength !== void 0 ? nBitLength : n.toString(2).length;
+        const nByteLength = Math.ceil(_nBitLength / 8);
+        return { nBitLength: _nBitLength, nByteLength };
+      }
+      exports.nLength = nLength;
+      function Field(ORDER, bitLen, isLE = false, redef = {}) {
+        if (ORDER <= _0n)
+          throw new Error(`Expected Field ORDER > 0, got ${ORDER}`);
+        const { nBitLength: BITS, nByteLength: BYTES } = nLength(ORDER, bitLen);
+        if (BYTES > 2048)
+          throw new Error("Field lengths over 2048 bytes are not supported");
+        const sqrtP = FpSqrt(ORDER);
+        const f = Object.freeze({
+          ORDER,
+          BITS,
+          BYTES,
+          MASK: (0, utils_js_1.bitMask)(BITS),
+          ZERO: _0n,
+          ONE: _1n,
+          create: (num) => mod(num, ORDER),
+          isValid: (num) => {
+            if (typeof num !== "bigint")
+              throw new Error(`Invalid field element: expected bigint, got ${typeof num}`);
+            return _0n <= num && num < ORDER;
+          },
+          is0: (num) => num === _0n,
+          isOdd: (num) => (num & _1n) === _1n,
+          neg: (num) => mod(-num, ORDER),
+          eql: (lhs, rhs) => lhs === rhs,
+          sqr: (num) => mod(num * num, ORDER),
+          add: (lhs, rhs) => mod(lhs + rhs, ORDER),
+          sub: (lhs, rhs) => mod(lhs - rhs, ORDER),
+          mul: (lhs, rhs) => mod(lhs * rhs, ORDER),
+          pow: (num, power) => FpPow(f, num, power),
+          div: (lhs, rhs) => mod(lhs * invert(rhs, ORDER), ORDER),
+          // Same as above, but doesn't normalize
+          sqrN: (num) => num * num,
+          addN: (lhs, rhs) => lhs + rhs,
+          subN: (lhs, rhs) => lhs - rhs,
+          mulN: (lhs, rhs) => lhs * rhs,
+          inv: (num) => invert(num, ORDER),
+          sqrt: redef.sqrt || ((n) => sqrtP(f, n)),
+          invertBatch: (lst) => FpInvertBatch(f, lst),
+          // TODO: do we really need constant cmov?
+          // We don't have const-time bigints anyway, so probably will be not very useful
+          cmov: (a, b, c) => c ? b : a,
+          toBytes: (num) => isLE ? (0, utils_js_1.numberToBytesLE)(num, BYTES) : (0, utils_js_1.numberToBytesBE)(num, BYTES),
+          fromBytes: (bytes) => {
+            if (bytes.length !== BYTES)
+              throw new Error(`Fp.fromBytes: expected ${BYTES}, got ${bytes.length}`);
+            return isLE ? (0, utils_js_1.bytesToNumberLE)(bytes) : (0, utils_js_1.bytesToNumberBE)(bytes);
+          }
+        });
+        return Object.freeze(f);
+      }
+      exports.Field = Field;
+      function FpSqrtOdd(Fp, elm) {
+        if (!Fp.isOdd)
+          throw new Error(`Field doesn't have isOdd`);
+        const root = Fp.sqrt(elm);
+        return Fp.isOdd(root) ? root : Fp.neg(root);
+      }
+      exports.FpSqrtOdd = FpSqrtOdd;
+      function FpSqrtEven(Fp, elm) {
+        if (!Fp.isOdd)
+          throw new Error(`Field doesn't have isOdd`);
+        const root = Fp.sqrt(elm);
+        return Fp.isOdd(root) ? Fp.neg(root) : root;
+      }
+      exports.FpSqrtEven = FpSqrtEven;
+      function hashToPrivateScalar(hash, groupOrder, isLE = false) {
+        hash = (0, utils_js_1.ensureBytes)("privateHash", hash);
+        const hashLen = hash.length;
+        const minLen = nLength(groupOrder).nByteLength + 8;
+        if (minLen < 24 || hashLen < minLen || hashLen > 1024)
+          throw new Error(`hashToPrivateScalar: expected ${minLen}-1024 bytes of input, got ${hashLen}`);
+        const num = isLE ? (0, utils_js_1.bytesToNumberLE)(hash) : (0, utils_js_1.bytesToNumberBE)(hash);
+        return mod(num, groupOrder - _1n) + _1n;
+      }
+      exports.hashToPrivateScalar = hashToPrivateScalar;
+      function getFieldBytesLength(fieldOrder) {
+        if (typeof fieldOrder !== "bigint")
+          throw new Error("field order must be bigint");
+        const bitLength = fieldOrder.toString(2).length;
+        return Math.ceil(bitLength / 8);
+      }
+      exports.getFieldBytesLength = getFieldBytesLength;
+      function getMinHashLength(fieldOrder) {
+        const length = getFieldBytesLength(fieldOrder);
+        return length + Math.ceil(length / 2);
+      }
+      exports.getMinHashLength = getMinHashLength;
+      function mapHashToField(key, fieldOrder, isLE = false) {
+        const len = key.length;
+        const fieldLen = getFieldBytesLength(fieldOrder);
+        const minLen = getMinHashLength(fieldOrder);
+        if (len < 16 || len < minLen || len > 1024)
+          throw new Error(`expected ${minLen}-1024 bytes of input, got ${len}`);
+        const num = isLE ? (0, utils_js_1.bytesToNumberBE)(key) : (0, utils_js_1.bytesToNumberLE)(key);
+        const reduced = mod(num, fieldOrder - _1n) + _1n;
+        return isLE ? (0, utils_js_1.numberToBytesLE)(reduced, fieldLen) : (0, utils_js_1.numberToBytesBE)(reduced, fieldLen);
+      }
+      exports.mapHashToField = mapHashToField;
+    }
+  });
+
+  // node_modules/@noble/curves/abstract/curve.js
+  var require_curve = __commonJS({
+    "node_modules/@noble/curves/abstract/curve.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.validateBasic = exports.wNAF = void 0;
+      var modular_js_1 = require_modular();
+      var utils_js_1 = require_utils3();
+      var _0n = BigInt(0);
+      var _1n = BigInt(1);
+      function wNAF(c, bits) {
+        const constTimeNegate = (condition, item) => {
+          const neg = item.negate();
+          return condition ? neg : item;
+        };
+        const opts = (W) => {
+          const windows = Math.ceil(bits / W) + 1;
+          const windowSize = 2 ** (W - 1);
+          return { windows, windowSize };
+        };
+        return {
+          constTimeNegate,
+          // non-const time multiplication ladder
+          unsafeLadder(elm, n) {
+            let p = c.ZERO;
+            let d = elm;
+            while (n > _0n) {
+              if (n & _1n)
+                p = p.add(d);
+              d = d.double();
+              n >>= _1n;
+            }
+            return p;
+          },
+          /**
+           * Creates a wNAF precomputation window. Used for caching.
+           * Default window size is set by `utils.precompute()` and is equal to 8.
+           * Number of precomputed points depends on the curve size:
+           * 2^(𝑊−1) * (Math.ceil(𝑛 / 𝑊) + 1), where:
+           * - 𝑊 is the window size
+           * - 𝑛 is the bitlength of the curve order.
+           * For a 256-bit curve and window size 8, the number of precomputed points is 128 * 33 = 4224.
+           * @returns precomputed point tables flattened to a single array
+           */
+          precomputeWindow(elm, W) {
+            const { windows, windowSize } = opts(W);
+            const points = [];
+            let p = elm;
+            let base = p;
+            for (let window2 = 0; window2 < windows; window2++) {
+              base = p;
+              points.push(base);
+              for (let i = 1; i < windowSize; i++) {
+                base = base.add(p);
+                points.push(base);
+              }
+              p = base.double();
+            }
+            return points;
+          },
+          /**
+           * Implements ec multiplication using precomputed tables and w-ary non-adjacent form.
+           * @param W window size
+           * @param precomputes precomputed tables
+           * @param n scalar (we don't check here, but should be less than curve order)
+           * @returns real and fake (for const-time) points
+           */
+          wNAF(W, precomputes, n) {
+            const { windows, windowSize } = opts(W);
+            let p = c.ZERO;
+            let f = c.BASE;
+            const mask = BigInt(2 ** W - 1);
+            const maxNumber = 2 ** W;
+            const shiftBy = BigInt(W);
+            for (let window2 = 0; window2 < windows; window2++) {
+              const offset = window2 * windowSize;
+              let wbits = Number(n & mask);
+              n >>= shiftBy;
+              if (wbits > windowSize) {
+                wbits -= maxNumber;
+                n += _1n;
+              }
+              const offset1 = offset;
+              const offset2 = offset + Math.abs(wbits) - 1;
+              const cond1 = window2 % 2 !== 0;
+              const cond2 = wbits < 0;
+              if (wbits === 0) {
+                f = f.add(constTimeNegate(cond1, precomputes[offset1]));
+              } else {
+                p = p.add(constTimeNegate(cond2, precomputes[offset2]));
+              }
+            }
+            return { p, f };
+          },
+          wNAFCached(P, precomputesMap, n, transform) {
+            const W = P._WINDOW_SIZE || 1;
+            let comp = precomputesMap.get(P);
+            if (!comp) {
+              comp = this.precomputeWindow(P, W);
+              if (W !== 1) {
+                precomputesMap.set(P, transform(comp));
+              }
+            }
+            return this.wNAF(W, comp, n);
+          }
+        };
+      }
+      exports.wNAF = wNAF;
+      function validateBasic(curve) {
+        (0, modular_js_1.validateField)(curve.Fp);
+        (0, utils_js_1.validateObject)(curve, {
+          n: "bigint",
+          h: "bigint",
+          Gx: "field",
+          Gy: "field"
+        }, {
+          nBitLength: "isSafeInteger",
+          nByteLength: "isSafeInteger"
+        });
+        return Object.freeze({
+          ...(0, modular_js_1.nLength)(curve.n, curve.nBitLength),
+          ...curve,
+          ...{ p: curve.Fp.ORDER }
+        });
+      }
+      exports.validateBasic = validateBasic;
+    }
+  });
+
+  // node_modules/@noble/curves/abstract/weierstrass.js
+  var require_weierstrass = __commonJS({
+    "node_modules/@noble/curves/abstract/weierstrass.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.mapToCurveSimpleSWU = exports.SWUFpSqrtRatio = exports.weierstrass = exports.weierstrassPoints = exports.DER = void 0;
+      var mod = require_modular();
+      var ut = require_utils3();
+      var utils_js_1 = require_utils3();
+      var curve_js_1 = require_curve();
+      function validatePointOpts(curve) {
+        const opts = (0, curve_js_1.validateBasic)(curve);
+        ut.validateObject(opts, {
+          a: "field",
+          b: "field"
+        }, {
+          allowedPrivateKeyLengths: "array",
+          wrapPrivateKey: "boolean",
+          isTorsionFree: "function",
+          clearCofactor: "function",
+          allowInfinityPoint: "boolean",
+          fromBytes: "function",
+          toBytes: "function"
+        });
+        const { endo, Fp, a } = opts;
+        if (endo) {
+          if (!Fp.eql(a, Fp.ZERO)) {
+            throw new Error("Endomorphism can only be defined for Koblitz curves that have a=0");
+          }
+          if (typeof endo !== "object" || typeof endo.beta !== "bigint" || typeof endo.splitScalar !== "function") {
+            throw new Error("Expected endomorphism with beta: bigint and splitScalar: function");
+          }
+        }
+        return Object.freeze({ ...opts });
+      }
+      var { bytesToNumberBE: b2n, hexToBytes: h2b } = ut;
+      exports.DER = {
+        // asn.1 DER encoding utils
+        Err: class DERErr extends Error {
+          constructor(m = "") {
+            super(m);
+          }
+        },
+        _parseInt(data) {
+          const { Err: E } = exports.DER;
+          if (data.length < 2 || data[0] !== 2)
+            throw new E("Invalid signature integer tag");
+          const len = data[1];
+          const res = data.subarray(2, len + 2);
+          if (!len || res.length !== len)
+            throw new E("Invalid signature integer: wrong length");
+          if (res[0] & 128)
+            throw new E("Invalid signature integer: negative");
+          if (res[0] === 0 && !(res[1] & 128))
+            throw new E("Invalid signature integer: unnecessary leading zero");
+          return { d: b2n(res), l: data.subarray(len + 2) };
+        },
+        toSig(hex) {
+          const { Err: E } = exports.DER;
+          const data = typeof hex === "string" ? h2b(hex) : hex;
+          if (!(data instanceof Uint8Array))
+            throw new Error("ui8a expected");
+          let l = data.length;
+          if (l < 2 || data[0] != 48)
+            throw new E("Invalid signature tag");
+          if (data[1] !== l - 2)
+            throw new E("Invalid signature: incorrect length");
+          const { d: r, l: sBytes } = exports.DER._parseInt(data.subarray(2));
+          const { d: s, l: rBytesLeft } = exports.DER._parseInt(sBytes);
+          if (rBytesLeft.length)
+            throw new E("Invalid signature: left bytes after parsing");
+          return { r, s };
+        },
+        hexFromSig(sig) {
+          const slice = (s2) => Number.parseInt(s2[0], 16) & 8 ? "00" + s2 : s2;
+          const h = (num) => {
+            const hex = num.toString(16);
+            return hex.length & 1 ? `0${hex}` : hex;
+          };
+          const s = slice(h(sig.s));
+          const r = slice(h(sig.r));
+          const shl = s.length / 2;
+          const rhl = r.length / 2;
+          const sl = h(shl);
+          const rl = h(rhl);
+          return `30${h(rhl + shl + 4)}02${rl}${r}02${sl}${s}`;
+        }
+      };
+      var _0n = BigInt(0);
+      var _1n = BigInt(1);
+      var _2n = BigInt(2);
+      var _3n = BigInt(3);
+      var _4n = BigInt(4);
+      function weierstrassPoints(opts) {
+        const CURVE = validatePointOpts(opts);
+        const { Fp } = CURVE;
+        const toBytes = CURVE.toBytes || ((_c, point, _isCompressed) => {
+          const a = point.toAffine();
+          return ut.concatBytes(Uint8Array.from([4]), Fp.toBytes(a.x), Fp.toBytes(a.y));
+        });
+        const fromBytes = CURVE.fromBytes || ((bytes) => {
+          const tail = bytes.subarray(1);
+          const x = Fp.fromBytes(tail.subarray(0, Fp.BYTES));
+          const y = Fp.fromBytes(tail.subarray(Fp.BYTES, 2 * Fp.BYTES));
+          return { x, y };
+        });
+        function weierstrassEquation(x) {
+          const { a, b } = CURVE;
+          const x2 = Fp.sqr(x);
+          const x3 = Fp.mul(x2, x);
+          return Fp.add(Fp.add(x3, Fp.mul(x, a)), b);
+        }
+        if (!Fp.eql(Fp.sqr(CURVE.Gy), weierstrassEquation(CURVE.Gx)))
+          throw new Error("bad generator point: equation left != right");
+        function isWithinCurveOrder(num) {
+          return typeof num === "bigint" && _0n < num && num < CURVE.n;
+        }
+        function assertGE(num) {
+          if (!isWithinCurveOrder(num))
+            throw new Error("Expected valid bigint: 0 < bigint < curve.n");
+        }
+        function normPrivateKeyToScalar(key) {
+          const { allowedPrivateKeyLengths: lengths, nByteLength, wrapPrivateKey, n } = CURVE;
+          if (lengths && typeof key !== "bigint") {
+            if (key instanceof Uint8Array)
+              key = ut.bytesToHex(key);
+            if (typeof key !== "string" || !lengths.includes(key.length))
+              throw new Error("Invalid key");
+            key = key.padStart(nByteLength * 2, "0");
+          }
+          let num;
+          try {
+            num = typeof key === "bigint" ? key : ut.bytesToNumberBE((0, utils_js_1.ensureBytes)("private key", key, nByteLength));
+          } catch (error) {
+            throw new Error(`private key must be ${nByteLength} bytes, hex or bigint, not ${typeof key}`);
+          }
+          if (wrapPrivateKey)
+            num = mod.mod(num, n);
+          assertGE(num);
+          return num;
+        }
+        const pointPrecomputes = /* @__PURE__ */ new Map();
+        function assertPrjPoint(other) {
+          if (!(other instanceof Point))
+            throw new Error("ProjectivePoint expected");
+        }
+        class Point {
+          constructor(px, py, pz) {
+            this.px = px;
+            this.py = py;
+            this.pz = pz;
+            if (px == null || !Fp.isValid(px))
+              throw new Error("x required");
+            if (py == null || !Fp.isValid(py))
+              throw new Error("y required");
+            if (pz == null || !Fp.isValid(pz))
+              throw new Error("z required");
+          }
+          // Does not validate if the point is on-curve.
+          // Use fromHex instead, or call assertValidity() later.
+          static fromAffine(p) {
+            const { x, y } = p || {};
+            if (!p || !Fp.isValid(x) || !Fp.isValid(y))
+              throw new Error("invalid affine point");
+            if (p instanceof Point)
+              throw new Error("projective point not allowed");
+            const is0 = (i) => Fp.eql(i, Fp.ZERO);
+            if (is0(x) && is0(y))
+              return Point.ZERO;
+            return new Point(x, y, Fp.ONE);
+          }
+          get x() {
+            return this.toAffine().x;
+          }
+          get y() {
+            return this.toAffine().y;
+          }
+          /**
+           * Takes a bunch of Projective Points but executes only one
+           * inversion on all of them. Inversion is very slow operation,
+           * so this improves performance massively.
+           * Optimization: converts a list of projective points to a list of identical points with Z=1.
+           */
+          static normalizeZ(points) {
+            const toInv = Fp.invertBatch(points.map((p) => p.pz));
+            return points.map((p, i) => p.toAffine(toInv[i])).map(Point.fromAffine);
+          }
+          /**
+           * Converts hash string or Uint8Array to Point.
+           * @param hex short/long ECDSA hex
+           */
+          static fromHex(hex) {
+            const P = Point.fromAffine(fromBytes((0, utils_js_1.ensureBytes)("pointHex", hex)));
+            P.assertValidity();
+            return P;
+          }
+          // Multiplies generator point by privateKey.
+          static fromPrivateKey(privateKey) {
+            return Point.BASE.multiply(normPrivateKeyToScalar(privateKey));
+          }
+          // "Private method", don't use it directly
+          _setWindowSize(windowSize) {
+            this._WINDOW_SIZE = windowSize;
+            pointPrecomputes.delete(this);
+          }
+          // A point on curve is valid if it conforms to equation.
+          assertValidity() {
+            if (this.is0()) {
+              if (CURVE.allowInfinityPoint && !Fp.is0(this.py))
+                return;
+              throw new Error("bad point: ZERO");
+            }
+            const { x, y } = this.toAffine();
+            if (!Fp.isValid(x) || !Fp.isValid(y))
+              throw new Error("bad point: x or y not FE");
+            const left = Fp.sqr(y);
+            const right = weierstrassEquation(x);
+            if (!Fp.eql(left, right))
+              throw new Error("bad point: equation left != right");
+            if (!this.isTorsionFree())
+              throw new Error("bad point: not in prime-order subgroup");
+          }
+          hasEvenY() {
+            const { y } = this.toAffine();
+            if (Fp.isOdd)
+              return !Fp.isOdd(y);
+            throw new Error("Field doesn't support isOdd");
+          }
+          /**
+           * Compare one point to another.
+           */
+          equals(other) {
+            assertPrjPoint(other);
+            const { px: X1, py: Y1, pz: Z1 } = this;
+            const { px: X2, py: Y2, pz: Z2 } = other;
+            const U1 = Fp.eql(Fp.mul(X1, Z2), Fp.mul(X2, Z1));
+            const U2 = Fp.eql(Fp.mul(Y1, Z2), Fp.mul(Y2, Z1));
+            return U1 && U2;
+          }
+          /**
+           * Flips point to one corresponding to (x, -y) in Affine coordinates.
+           */
+          negate() {
+            return new Point(this.px, Fp.neg(this.py), this.pz);
+          }
+          // Renes-Costello-Batina exception-free doubling formula.
+          // There is 30% faster Jacobian formula, but it is not complete.
+          // https://eprint.iacr.org/2015/1060, algorithm 3
+          // Cost: 8M + 3S + 3*a + 2*b3 + 15add.
+          double() {
+            const { a, b } = CURVE;
+            const b3 = Fp.mul(b, _3n);
+            const { px: X1, py: Y1, pz: Z1 } = this;
+            let X3 = Fp.ZERO, Y3 = Fp.ZERO, Z3 = Fp.ZERO;
+            let t0 = Fp.mul(X1, X1);
+            let t1 = Fp.mul(Y1, Y1);
+            let t2 = Fp.mul(Z1, Z1);
+            let t3 = Fp.mul(X1, Y1);
+            t3 = Fp.add(t3, t3);
+            Z3 = Fp.mul(X1, Z1);
+            Z3 = Fp.add(Z3, Z3);
+            X3 = Fp.mul(a, Z3);
+            Y3 = Fp.mul(b3, t2);
+            Y3 = Fp.add(X3, Y3);
+            X3 = Fp.sub(t1, Y3);
+            Y3 = Fp.add(t1, Y3);
+            Y3 = Fp.mul(X3, Y3);
+            X3 = Fp.mul(t3, X3);
+            Z3 = Fp.mul(b3, Z3);
+            t2 = Fp.mul(a, t2);
+            t3 = Fp.sub(t0, t2);
+            t3 = Fp.mul(a, t3);
+            t3 = Fp.add(t3, Z3);
+            Z3 = Fp.add(t0, t0);
+            t0 = Fp.add(Z3, t0);
+            t0 = Fp.add(t0, t2);
+            t0 = Fp.mul(t0, t3);
+            Y3 = Fp.add(Y3, t0);
+            t2 = Fp.mul(Y1, Z1);
+            t2 = Fp.add(t2, t2);
+            t0 = Fp.mul(t2, t3);
+            X3 = Fp.sub(X3, t0);
+            Z3 = Fp.mul(t2, t1);
+            Z3 = Fp.add(Z3, Z3);
+            Z3 = Fp.add(Z3, Z3);
+            return new Point(X3, Y3, Z3);
+          }
+          // Renes-Costello-Batina exception-free addition formula.
+          // There is 30% faster Jacobian formula, but it is not complete.
+          // https://eprint.iacr.org/2015/1060, algorithm 1
+          // Cost: 12M + 0S + 3*a + 3*b3 + 23add.
+          add(other) {
+            assertPrjPoint(other);
+            const { px: X1, py: Y1, pz: Z1 } = this;
+            const { px: X2, py: Y2, pz: Z2 } = other;
+            let X3 = Fp.ZERO, Y3 = Fp.ZERO, Z3 = Fp.ZERO;
+            const a = CURVE.a;
+            const b3 = Fp.mul(CURVE.b, _3n);
+            let t0 = Fp.mul(X1, X2);
+            let t1 = Fp.mul(Y1, Y2);
+            let t2 = Fp.mul(Z1, Z2);
+            let t3 = Fp.add(X1, Y1);
+            let t4 = Fp.add(X2, Y2);
+            t3 = Fp.mul(t3, t4);
+            t4 = Fp.add(t0, t1);
+            t3 = Fp.sub(t3, t4);
+            t4 = Fp.add(X1, Z1);
+            let t5 = Fp.add(X2, Z2);
+            t4 = Fp.mul(t4, t5);
+            t5 = Fp.add(t0, t2);
+            t4 = Fp.sub(t4, t5);
+            t5 = Fp.add(Y1, Z1);
+            X3 = Fp.add(Y2, Z2);
+            t5 = Fp.mul(t5, X3);
+            X3 = Fp.add(t1, t2);
+            t5 = Fp.sub(t5, X3);
+            Z3 = Fp.mul(a, t4);
+            X3 = Fp.mul(b3, t2);
+            Z3 = Fp.add(X3, Z3);
+            X3 = Fp.sub(t1, Z3);
+            Z3 = Fp.add(t1, Z3);
+            Y3 = Fp.mul(X3, Z3);
+            t1 = Fp.add(t0, t0);
+            t1 = Fp.add(t1, t0);
+            t2 = Fp.mul(a, t2);
+            t4 = Fp.mul(b3, t4);
+            t1 = Fp.add(t1, t2);
+            t2 = Fp.sub(t0, t2);
+            t2 = Fp.mul(a, t2);
+            t4 = Fp.add(t4, t2);
+            t0 = Fp.mul(t1, t4);
+            Y3 = Fp.add(Y3, t0);
+            t0 = Fp.mul(t5, t4);
+            X3 = Fp.mul(t3, X3);
+            X3 = Fp.sub(X3, t0);
+            t0 = Fp.mul(t3, t1);
+            Z3 = Fp.mul(t5, Z3);
+            Z3 = Fp.add(Z3, t0);
+            return new Point(X3, Y3, Z3);
+          }
+          subtract(other) {
+            return this.add(other.negate());
+          }
+          is0() {
+            return this.equals(Point.ZERO);
+          }
+          wNAF(n) {
+            return wnaf.wNAFCached(this, pointPrecomputes, n, (comp) => {
+              const toInv = Fp.invertBatch(comp.map((p) => p.pz));
+              return comp.map((p, i) => p.toAffine(toInv[i])).map(Point.fromAffine);
+            });
+          }
+          /**
+           * Non-constant-time multiplication. Uses double-and-add algorithm.
+           * It's faster, but should only be used when you don't care about
+           * an exposed private key e.g. sig verification, which works over *public* keys.
+           */
+          multiplyUnsafe(n) {
+            const I = Point.ZERO;
+            if (n === _0n)
+              return I;
+            assertGE(n);
+            if (n === _1n)
+              return this;
+            const { endo } = CURVE;
+            if (!endo)
+              return wnaf.unsafeLadder(this, n);
+            let { k1neg, k1, k2neg, k2 } = endo.splitScalar(n);
+            let k1p = I;
+            let k2p = I;
+            let d = this;
+            while (k1 > _0n || k2 > _0n) {
+              if (k1 & _1n)
+                k1p = k1p.add(d);
+              if (k2 & _1n)
+                k2p = k2p.add(d);
+              d = d.double();
+              k1 >>= _1n;
+              k2 >>= _1n;
+            }
+            if (k1neg)
+              k1p = k1p.negate();
+            if (k2neg)
+              k2p = k2p.negate();
+            k2p = new Point(Fp.mul(k2p.px, endo.beta), k2p.py, k2p.pz);
+            return k1p.add(k2p);
+          }
+          /**
+           * Constant time multiplication.
+           * Uses wNAF method. Windowed method may be 10% faster,
+           * but takes 2x longer to generate and consumes 2x memory.
+           * Uses precomputes when available.
+           * Uses endomorphism for Koblitz curves.
+           * @param scalar by which the point would be multiplied
+           * @returns New point
+           */
+          multiply(scalar) {
+            assertGE(scalar);
+            let n = scalar;
+            let point, fake;
+            const { endo } = CURVE;
+            if (endo) {
+              const { k1neg, k1, k2neg, k2 } = endo.splitScalar(n);
+              let { p: k1p, f: f1p } = this.wNAF(k1);
+              let { p: k2p, f: f2p } = this.wNAF(k2);
+              k1p = wnaf.constTimeNegate(k1neg, k1p);
+              k2p = wnaf.constTimeNegate(k2neg, k2p);
+              k2p = new Point(Fp.mul(k2p.px, endo.beta), k2p.py, k2p.pz);
+              point = k1p.add(k2p);
+              fake = f1p.add(f2p);
+            } else {
+              const { p, f } = this.wNAF(n);
+              point = p;
+              fake = f;
+            }
+            return Point.normalizeZ([point, fake])[0];
+          }
+          /**
+           * Efficiently calculate `aP + bQ`. Unsafe, can expose private key, if used incorrectly.
+           * Not using Strauss-Shamir trick: precomputation tables are faster.
+           * The trick could be useful if both P and Q are not G (not in our case).
+           * @returns non-zero affine point
+           */
+          multiplyAndAddUnsafe(Q, a, b) {
+            const G = Point.BASE;
+            const mul = (P, a2) => a2 === _0n || a2 === _1n || !P.equals(G) ? P.multiplyUnsafe(a2) : P.multiply(a2);
+            const sum = mul(this, a).add(mul(Q, b));
+            return sum.is0() ? void 0 : sum;
+          }
+          // Converts Projective point to affine (x, y) coordinates.
+          // Can accept precomputed Z^-1 - for example, from invertBatch.
+          // (x, y, z) ∋ (x=x/z, y=y/z)
+          toAffine(iz) {
+            const { px: x, py: y, pz: z } = this;
+            const is0 = this.is0();
+            if (iz == null)
+              iz = is0 ? Fp.ONE : Fp.inv(z);
+            const ax = Fp.mul(x, iz);
+            const ay = Fp.mul(y, iz);
+            const zz = Fp.mul(z, iz);
+            if (is0)
+              return { x: Fp.ZERO, y: Fp.ZERO };
+            if (!Fp.eql(zz, Fp.ONE))
+              throw new Error("invZ was invalid");
+            return { x: ax, y: ay };
+          }
+          isTorsionFree() {
+            const { h: cofactor, isTorsionFree } = CURVE;
+            if (cofactor === _1n)
+              return true;
+            if (isTorsionFree)
+              return isTorsionFree(Point, this);
+            throw new Error("isTorsionFree() has not been declared for the elliptic curve");
+          }
+          clearCofactor() {
+            const { h: cofactor, clearCofactor } = CURVE;
+            if (cofactor === _1n)
+              return this;
+            if (clearCofactor)
+              return clearCofactor(Point, this);
+            return this.multiplyUnsafe(CURVE.h);
+          }
+          toRawBytes(isCompressed = true) {
+            this.assertValidity();
+            return toBytes(Point, this, isCompressed);
+          }
+          toHex(isCompressed = true) {
+            return ut.bytesToHex(this.toRawBytes(isCompressed));
+          }
+        }
+        Point.BASE = new Point(CURVE.Gx, CURVE.Gy, Fp.ONE);
+        Point.ZERO = new Point(Fp.ZERO, Fp.ONE, Fp.ZERO);
+        const _bits = CURVE.nBitLength;
+        const wnaf = (0, curve_js_1.wNAF)(Point, CURVE.endo ? Math.ceil(_bits / 2) : _bits);
+        return {
+          CURVE,
+          ProjectivePoint: Point,
+          normPrivateKeyToScalar,
+          weierstrassEquation,
+          isWithinCurveOrder
+        };
+      }
+      exports.weierstrassPoints = weierstrassPoints;
+      function validateOpts(curve) {
+        const opts = (0, curve_js_1.validateBasic)(curve);
+        ut.validateObject(opts, {
+          hash: "hash",
+          hmac: "function",
+          randomBytes: "function"
+        }, {
+          bits2int: "function",
+          bits2int_modN: "function",
+          lowS: "boolean"
+        });
+        return Object.freeze({ lowS: true, ...opts });
+      }
+      function weierstrass(curveDef) {
+        const CURVE = validateOpts(curveDef);
+        const { Fp, n: CURVE_ORDER } = CURVE;
+        const compressedLen = Fp.BYTES + 1;
+        const uncompressedLen = 2 * Fp.BYTES + 1;
+        function isValidFieldElement(num) {
+          return _0n < num && num < Fp.ORDER;
+        }
+        function modN(a) {
+          return mod.mod(a, CURVE_ORDER);
+        }
+        function invN(a) {
+          return mod.invert(a, CURVE_ORDER);
+        }
+        const { ProjectivePoint: Point, normPrivateKeyToScalar, weierstrassEquation, isWithinCurveOrder } = weierstrassPoints({
+          ...CURVE,
+          toBytes(_c, point, isCompressed) {
+            const a = point.toAffine();
+            const x = Fp.toBytes(a.x);
+            const cat = ut.concatBytes;
+            if (isCompressed) {
+              return cat(Uint8Array.from([point.hasEvenY() ? 2 : 3]), x);
+            } else {
+              return cat(Uint8Array.from([4]), x, Fp.toBytes(a.y));
+            }
+          },
+          fromBytes(bytes) {
+            const len = bytes.length;
+            const head = bytes[0];
+            const tail = bytes.subarray(1);
+            if (len === compressedLen && (head === 2 || head === 3)) {
+              const x = ut.bytesToNumberBE(tail);
+              if (!isValidFieldElement(x))
+                throw new Error("Point is not on curve");
+              const y2 = weierstrassEquation(x);
+              let y = Fp.sqrt(y2);
+              const isYOdd = (y & _1n) === _1n;
+              const isHeadOdd = (head & 1) === 1;
+              if (isHeadOdd !== isYOdd)
+                y = Fp.neg(y);
+              return { x, y };
+            } else if (len === uncompressedLen && head === 4) {
+              const x = Fp.fromBytes(tail.subarray(0, Fp.BYTES));
+              const y = Fp.fromBytes(tail.subarray(Fp.BYTES, 2 * Fp.BYTES));
+              return { x, y };
+            } else {
+              throw new Error(`Point of length ${len} was invalid. Expected ${compressedLen} compressed bytes or ${uncompressedLen} uncompressed bytes`);
+            }
+          }
+        });
+        const numToNByteStr = (num) => ut.bytesToHex(ut.numberToBytesBE(num, CURVE.nByteLength));
+        function isBiggerThanHalfOrder(number) {
+          const HALF = CURVE_ORDER >> _1n;
+          return number > HALF;
+        }
+        function normalizeS(s) {
+          return isBiggerThanHalfOrder(s) ? modN(-s) : s;
+        }
+        const slcNum = (b, from, to) => ut.bytesToNumberBE(b.slice(from, to));
+        class Signature {
+          constructor(r, s, recovery) {
+            this.r = r;
+            this.s = s;
+            this.recovery = recovery;
+            this.assertValidity();
+          }
+          // pair (bytes of r, bytes of s)
+          static fromCompact(hex) {
+            const l = CURVE.nByteLength;
+            hex = (0, utils_js_1.ensureBytes)("compactSignature", hex, l * 2);
+            return new Signature(slcNum(hex, 0, l), slcNum(hex, l, 2 * l));
+          }
+          // DER encoded ECDSA signature
+          // https://bitcoin.stackexchange.com/questions/57644/what-are-the-parts-of-a-bitcoin-transaction-input-script
+          static fromDER(hex) {
+            const { r, s } = exports.DER.toSig((0, utils_js_1.ensureBytes)("DER", hex));
+            return new Signature(r, s);
+          }
+          assertValidity() {
+            if (!isWithinCurveOrder(this.r))
+              throw new Error("r must be 0 < r < CURVE.n");
+            if (!isWithinCurveOrder(this.s))
+              throw new Error("s must be 0 < s < CURVE.n");
+          }
+          addRecoveryBit(recovery) {
+            return new Signature(this.r, this.s, recovery);
+          }
+          recoverPublicKey(msgHash) {
+            const { r, s, recovery: rec } = this;
+            const h = bits2int_modN((0, utils_js_1.ensureBytes)("msgHash", msgHash));
+            if (rec == null || ![0, 1, 2, 3].includes(rec))
+              throw new Error("recovery id invalid");
+            const radj = rec === 2 || rec === 3 ? r + CURVE.n : r;
+            if (radj >= Fp.ORDER)
+              throw new Error("recovery id 2 or 3 invalid");
+            const prefix = (rec & 1) === 0 ? "02" : "03";
+            const R = Point.fromHex(prefix + numToNByteStr(radj));
+            const ir = invN(radj);
+            const u1 = modN(-h * ir);
+            const u2 = modN(s * ir);
+            const Q = Point.BASE.multiplyAndAddUnsafe(R, u1, u2);
+            if (!Q)
+              throw new Error("point at infinify");
+            Q.assertValidity();
+            return Q;
+          }
+          // Signatures should be low-s, to prevent malleability.
+          hasHighS() {
+            return isBiggerThanHalfOrder(this.s);
+          }
+          normalizeS() {
+            return this.hasHighS() ? new Signature(this.r, modN(-this.s), this.recovery) : this;
+          }
+          // DER-encoded
+          toDERRawBytes() {
+            return ut.hexToBytes(this.toDERHex());
+          }
+          toDERHex() {
+            return exports.DER.hexFromSig({ r: this.r, s: this.s });
+          }
+          // padded bytes of r, then padded bytes of s
+          toCompactRawBytes() {
+            return ut.hexToBytes(this.toCompactHex());
+          }
+          toCompactHex() {
+            return numToNByteStr(this.r) + numToNByteStr(this.s);
+          }
+        }
+        const utils = {
+          isValidPrivateKey(privateKey) {
+            try {
+              normPrivateKeyToScalar(privateKey);
+              return true;
+            } catch (error) {
+              return false;
+            }
+          },
+          normPrivateKeyToScalar,
+          /**
+           * Produces cryptographically secure private key from random of size
+           * (groupLen + ceil(groupLen / 2)) with modulo bias being negligible.
+           */
+          randomPrivateKey: () => {
+            const length = mod.getMinHashLength(CURVE.n);
+            return mod.mapHashToField(CURVE.randomBytes(length), CURVE.n);
+          },
+          /**
+           * Creates precompute table for an arbitrary EC point. Makes point "cached".
+           * Allows to massively speed-up `point.multiply(scalar)`.
+           * @returns cached point
+           * @example
+           * const fast = utils.precompute(8, ProjectivePoint.fromHex(someonesPubKey));
+           * fast.multiply(privKey); // much faster ECDH now
+           */
+          precompute(windowSize = 8, point = Point.BASE) {
+            point._setWindowSize(windowSize);
+            point.multiply(BigInt(3));
+            return point;
+          }
+        };
+        function getPublicKey(privateKey, isCompressed = true) {
+          return Point.fromPrivateKey(privateKey).toRawBytes(isCompressed);
+        }
+        function isProbPub(item) {
+          const arr = item instanceof Uint8Array;
+          const str = typeof item === "string";
+          const len = (arr || str) && item.length;
+          if (arr)
+            return len === compressedLen || len === uncompressedLen;
+          if (str)
+            return len === 2 * compressedLen || len === 2 * uncompressedLen;
+          if (item instanceof Point)
+            return true;
+          return false;
+        }
+        function getSharedSecret(privateA, publicB, isCompressed = true) {
+          if (isProbPub(privateA))
+            throw new Error("first arg must be private key");
+          if (!isProbPub(publicB))
+            throw new Error("second arg must be public key");
+          const b = Point.fromHex(publicB);
+          return b.multiply(normPrivateKeyToScalar(privateA)).toRawBytes(isCompressed);
+        }
+        const bits2int = CURVE.bits2int || function(bytes) {
+          const num = ut.bytesToNumberBE(bytes);
+          const delta = bytes.length * 8 - CURVE.nBitLength;
+          return delta > 0 ? num >> BigInt(delta) : num;
+        };
+        const bits2int_modN = CURVE.bits2int_modN || function(bytes) {
+          return modN(bits2int(bytes));
+        };
+        const ORDER_MASK = ut.bitMask(CURVE.nBitLength);
+        function int2octets(num) {
+          if (typeof num !== "bigint")
+            throw new Error("bigint expected");
+          if (!(_0n <= num && num < ORDER_MASK))
+            throw new Error(`bigint expected < 2^${CURVE.nBitLength}`);
+          return ut.numberToBytesBE(num, CURVE.nByteLength);
+        }
+        function prepSig(msgHash, privateKey, opts = defaultSigOpts) {
+          if (["recovered", "canonical"].some((k) => k in opts))
+            throw new Error("sign() legacy options not supported");
+          const { hash, randomBytes } = CURVE;
+          let { lowS, prehash, extraEntropy: ent } = opts;
+          if (lowS == null)
+            lowS = true;
+          msgHash = (0, utils_js_1.ensureBytes)("msgHash", msgHash);
+          if (prehash)
+            msgHash = (0, utils_js_1.ensureBytes)("prehashed msgHash", hash(msgHash));
+          const h1int = bits2int_modN(msgHash);
+          const d = normPrivateKeyToScalar(privateKey);
+          const seedArgs = [int2octets(d), int2octets(h1int)];
+          if (ent != null) {
+            const e = ent === true ? randomBytes(Fp.BYTES) : ent;
+            seedArgs.push((0, utils_js_1.ensureBytes)("extraEntropy", e));
+          }
+          const seed = ut.concatBytes(...seedArgs);
+          const m = h1int;
+          function k2sig(kBytes) {
+            const k = bits2int(kBytes);
+            if (!isWithinCurveOrder(k))
+              return;
+            const ik = invN(k);
+            const q = Point.BASE.multiply(k).toAffine();
+            const r = modN(q.x);
+            if (r === _0n)
+              return;
+            const s = modN(ik * modN(m + r * d));
+            if (s === _0n)
+              return;
+            let recovery = (q.x === r ? 0 : 2) | Number(q.y & _1n);
+            let normS = s;
+            if (lowS && isBiggerThanHalfOrder(s)) {
+              normS = normalizeS(s);
+              recovery ^= 1;
+            }
+            return new Signature(r, normS, recovery);
+          }
+          return { seed, k2sig };
+        }
+        const defaultSigOpts = { lowS: CURVE.lowS, prehash: false };
+        const defaultVerOpts = { lowS: CURVE.lowS, prehash: false };
+        function sign(msgHash, privKey, opts = defaultSigOpts) {
+          const { seed, k2sig } = prepSig(msgHash, privKey, opts);
+          const C = CURVE;
+          const drbg = ut.createHmacDrbg(C.hash.outputLen, C.nByteLength, C.hmac);
+          return drbg(seed, k2sig);
+        }
+        Point.BASE._setWindowSize(8);
+        function verify(signature, msgHash, publicKey, opts = defaultVerOpts) {
+          const sg = signature;
+          msgHash = (0, utils_js_1.ensureBytes)("msgHash", msgHash);
+          publicKey = (0, utils_js_1.ensureBytes)("publicKey", publicKey);
+          if ("strict" in opts)
+            throw new Error("options.strict was renamed to lowS");
+          const { lowS, prehash } = opts;
+          let _sig = void 0;
+          let P;
+          try {
+            if (typeof sg === "string" || sg instanceof Uint8Array) {
+              try {
+                _sig = Signature.fromDER(sg);
+              } catch (derError) {
+                if (!(derError instanceof exports.DER.Err))
+                  throw derError;
+                _sig = Signature.fromCompact(sg);
+              }
+            } else if (typeof sg === "object" && typeof sg.r === "bigint" && typeof sg.s === "bigint") {
+              const { r: r2, s: s2 } = sg;
+              _sig = new Signature(r2, s2);
+            } else {
+              throw new Error("PARSE");
+            }
+            P = Point.fromHex(publicKey);
+          } catch (error) {
+            if (error.message === "PARSE")
+              throw new Error(`signature must be Signature instance, Uint8Array or hex string`);
+            return false;
+          }
+          if (lowS && _sig.hasHighS())
+            return false;
+          if (prehash)
+            msgHash = CURVE.hash(msgHash);
+          const { r, s } = _sig;
+          const h = bits2int_modN(msgHash);
+          const is = invN(s);
+          const u1 = modN(h * is);
+          const u2 = modN(r * is);
+          const R = Point.BASE.multiplyAndAddUnsafe(P, u1, u2)?.toAffine();
+          if (!R)
+            return false;
+          const v = modN(R.x);
+          return v === r;
+        }
+        return {
+          CURVE,
+          getPublicKey,
+          getSharedSecret,
+          sign,
+          verify,
+          ProjectivePoint: Point,
+          Signature,
+          utils
+        };
+      }
+      exports.weierstrass = weierstrass;
+      function SWUFpSqrtRatio(Fp, Z) {
+        const q = Fp.ORDER;
+        let l = _0n;
+        for (let o = q - _1n; o % _2n === _0n; o /= _2n)
+          l += _1n;
+        const c1 = l;
+        const _2n_pow_c1_1 = _2n << c1 - _1n - _1n;
+        const _2n_pow_c1 = _2n_pow_c1_1 * _2n;
+        const c2 = (q - _1n) / _2n_pow_c1;
+        const c3 = (c2 - _1n) / _2n;
+        const c4 = _2n_pow_c1 - _1n;
+        const c5 = _2n_pow_c1_1;
+        const c6 = Fp.pow(Z, c2);
+        const c7 = Fp.pow(Z, (c2 + _1n) / _2n);
+        let sqrtRatio = (u, v) => {
+          let tv1 = c6;
+          let tv2 = Fp.pow(v, c4);
+          let tv3 = Fp.sqr(tv2);
+          tv3 = Fp.mul(tv3, v);
+          let tv5 = Fp.mul(u, tv3);
+          tv5 = Fp.pow(tv5, c3);
+          tv5 = Fp.mul(tv5, tv2);
+          tv2 = Fp.mul(tv5, v);
+          tv3 = Fp.mul(tv5, u);
+          let tv4 = Fp.mul(tv3, tv2);
+          tv5 = Fp.pow(tv4, c5);
+          let isQR = Fp.eql(tv5, Fp.ONE);
+          tv2 = Fp.mul(tv3, c7);
+          tv5 = Fp.mul(tv4, tv1);
+          tv3 = Fp.cmov(tv2, tv3, isQR);
+          tv4 = Fp.cmov(tv5, tv4, isQR);
+          for (let i = c1; i > _1n; i--) {
+            let tv52 = i - _2n;
+            tv52 = _2n << tv52 - _1n;
+            let tvv5 = Fp.pow(tv4, tv52);
+            const e1 = Fp.eql(tvv5, Fp.ONE);
+            tv2 = Fp.mul(tv3, tv1);
+            tv1 = Fp.mul(tv1, tv1);
+            tvv5 = Fp.mul(tv4, tv1);
+            tv3 = Fp.cmov(tv2, tv3, e1);
+            tv4 = Fp.cmov(tvv5, tv4, e1);
+          }
+          return { isValid: isQR, value: tv3 };
+        };
+        if (Fp.ORDER % _4n === _3n) {
+          const c12 = (Fp.ORDER - _3n) / _4n;
+          const c22 = Fp.sqrt(Fp.neg(Z));
+          sqrtRatio = (u, v) => {
+            let tv1 = Fp.sqr(v);
+            const tv2 = Fp.mul(u, v);
+            tv1 = Fp.mul(tv1, tv2);
+            let y1 = Fp.pow(tv1, c12);
+            y1 = Fp.mul(y1, tv2);
+            const y2 = Fp.mul(y1, c22);
+            const tv3 = Fp.mul(Fp.sqr(y1), v);
+            const isQR = Fp.eql(tv3, u);
+            let y = Fp.cmov(y2, y1, isQR);
+            return { isValid: isQR, value: y };
+          };
+        }
+        return sqrtRatio;
+      }
+      exports.SWUFpSqrtRatio = SWUFpSqrtRatio;
+      function mapToCurveSimpleSWU(Fp, opts) {
+        mod.validateField(Fp);
+        if (!Fp.isValid(opts.A) || !Fp.isValid(opts.B) || !Fp.isValid(opts.Z))
+          throw new Error("mapToCurveSimpleSWU: invalid opts");
+        const sqrtRatio = SWUFpSqrtRatio(Fp, opts.Z);
+        if (!Fp.isOdd)
+          throw new Error("Fp.isOdd is not implemented!");
+        return (u) => {
+          let tv1, tv2, tv3, tv4, tv5, tv6, x, y;
+          tv1 = Fp.sqr(u);
+          tv1 = Fp.mul(tv1, opts.Z);
+          tv2 = Fp.sqr(tv1);
+          tv2 = Fp.add(tv2, tv1);
+          tv3 = Fp.add(tv2, Fp.ONE);
+          tv3 = Fp.mul(tv3, opts.B);
+          tv4 = Fp.cmov(opts.Z, Fp.neg(tv2), !Fp.eql(tv2, Fp.ZERO));
+          tv4 = Fp.mul(tv4, opts.A);
+          tv2 = Fp.sqr(tv3);
+          tv6 = Fp.sqr(tv4);
+          tv5 = Fp.mul(tv6, opts.A);
+          tv2 = Fp.add(tv2, tv5);
+          tv2 = Fp.mul(tv2, tv3);
+          tv6 = Fp.mul(tv6, tv4);
+          tv5 = Fp.mul(tv6, opts.B);
+          tv2 = Fp.add(tv2, tv5);
+          x = Fp.mul(tv1, tv3);
+          const { isValid, value } = sqrtRatio(tv2, tv6);
+          y = Fp.mul(tv1, u);
+          y = Fp.mul(y, value);
+          x = Fp.cmov(x, tv3, isValid);
+          y = Fp.cmov(y, value, isValid);
+          const e1 = Fp.isOdd(u) === Fp.isOdd(y);
+          y = Fp.cmov(Fp.neg(y), y, e1);
+          x = Fp.div(x, tv4);
+          return { x, y };
+        };
+      }
+      exports.mapToCurveSimpleSWU = mapToCurveSimpleSWU;
+    }
+  });
+
+  // node_modules/@noble/curves/abstract/hash-to-curve.js
+  var require_hash_to_curve = __commonJS({
+    "node_modules/@noble/curves/abstract/hash-to-curve.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.createHasher = exports.isogenyMap = exports.hash_to_field = exports.expand_message_xof = exports.expand_message_xmd = void 0;
+      var modular_js_1 = require_modular();
+      var utils_js_1 = require_utils3();
+      function validateDST(dst) {
+        if (dst instanceof Uint8Array)
+          return dst;
+        if (typeof dst === "string")
+          return (0, utils_js_1.utf8ToBytes)(dst);
+        throw new Error("DST must be Uint8Array or string");
+      }
+      var os2ip = utils_js_1.bytesToNumberBE;
+      function i2osp(value, length) {
+        if (value < 0 || value >= 1 << 8 * length) {
+          throw new Error(`bad I2OSP call: value=${value} length=${length}`);
+        }
+        const res = Array.from({ length }).fill(0);
+        for (let i = length - 1; i >= 0; i--) {
+          res[i] = value & 255;
+          value >>>= 8;
+        }
+        return new Uint8Array(res);
+      }
+      function strxor(a, b) {
+        const arr = new Uint8Array(a.length);
+        for (let i = 0; i < a.length; i++) {
+          arr[i] = a[i] ^ b[i];
+        }
+        return arr;
+      }
+      function isBytes(item) {
+        if (!(item instanceof Uint8Array))
+          throw new Error("Uint8Array expected");
+      }
+      function isNum(item) {
+        if (!Number.isSafeInteger(item))
+          throw new Error("number expected");
+      }
+      function expand_message_xmd(msg, DST, lenInBytes, H) {
+        isBytes(msg);
+        isBytes(DST);
+        isNum(lenInBytes);
+        if (DST.length > 255)
+          DST = H((0, utils_js_1.concatBytes)((0, utils_js_1.utf8ToBytes)("H2C-OVERSIZE-DST-"), DST));
+        const { outputLen: b_in_bytes, blockLen: r_in_bytes } = H;
+        const ell = Math.ceil(lenInBytes / b_in_bytes);
+        if (ell > 255)
+          throw new Error("Invalid xmd length");
+        const DST_prime = (0, utils_js_1.concatBytes)(DST, i2osp(DST.length, 1));
+        const Z_pad = i2osp(0, r_in_bytes);
+        const l_i_b_str = i2osp(lenInBytes, 2);
+        const b = new Array(ell);
+        const b_0 = H((0, utils_js_1.concatBytes)(Z_pad, msg, l_i_b_str, i2osp(0, 1), DST_prime));
+        b[0] = H((0, utils_js_1.concatBytes)(b_0, i2osp(1, 1), DST_prime));
+        for (let i = 1; i <= ell; i++) {
+          const args = [strxor(b_0, b[i - 1]), i2osp(i + 1, 1), DST_prime];
+          b[i] = H((0, utils_js_1.concatBytes)(...args));
+        }
+        const pseudo_random_bytes = (0, utils_js_1.concatBytes)(...b);
+        return pseudo_random_bytes.slice(0, lenInBytes);
+      }
+      exports.expand_message_xmd = expand_message_xmd;
+      function expand_message_xof(msg, DST, lenInBytes, k, H) {
+        isBytes(msg);
+        isBytes(DST);
+        isNum(lenInBytes);
+        if (DST.length > 255) {
+          const dkLen = Math.ceil(2 * k / 8);
+          DST = H.create({ dkLen }).update((0, utils_js_1.utf8ToBytes)("H2C-OVERSIZE-DST-")).update(DST).digest();
+        }
+        if (lenInBytes > 65535 || DST.length > 255)
+          throw new Error("expand_message_xof: invalid lenInBytes");
+        return H.create({ dkLen: lenInBytes }).update(msg).update(i2osp(lenInBytes, 2)).update(DST).update(i2osp(DST.length, 1)).digest();
+      }
+      exports.expand_message_xof = expand_message_xof;
+      function hash_to_field(msg, count, options) {
+        (0, utils_js_1.validateObject)(options, {
+          DST: "stringOrUint8Array",
+          p: "bigint",
+          m: "isSafeInteger",
+          k: "isSafeInteger",
+          hash: "hash"
+        });
+        const { p, k, m, hash, expand, DST: _DST } = options;
+        isBytes(msg);
+        isNum(count);
+        const DST = validateDST(_DST);
+        const log2p = p.toString(2).length;
+        const L = Math.ceil((log2p + k) / 8);
+        const len_in_bytes = count * m * L;
+        let prb;
+        if (expand === "xmd") {
+          prb = expand_message_xmd(msg, DST, len_in_bytes, hash);
+        } else if (expand === "xof") {
+          prb = expand_message_xof(msg, DST, len_in_bytes, k, hash);
+        } else if (expand === "_internal_pass") {
+          prb = msg;
+        } else {
+          throw new Error('expand must be "xmd" or "xof"');
+        }
+        const u = new Array(count);
+        for (let i = 0; i < count; i++) {
+          const e = new Array(m);
+          for (let j = 0; j < m; j++) {
+            const elm_offset = L * (j + i * m);
+            const tv = prb.subarray(elm_offset, elm_offset + L);
+            e[j] = (0, modular_js_1.mod)(os2ip(tv), p);
+          }
+          u[i] = e;
+        }
+        return u;
+      }
+      exports.hash_to_field = hash_to_field;
+      function isogenyMap(field, map) {
+        const COEFF = map.map((i) => Array.from(i).reverse());
+        return (x, y) => {
+          const [xNum, xDen, yNum, yDen] = COEFF.map((val) => val.reduce((acc, i) => field.add(field.mul(acc, x), i)));
+          x = field.div(xNum, xDen);
+          y = field.mul(y, field.div(yNum, yDen));
+          return { x, y };
+        };
+      }
+      exports.isogenyMap = isogenyMap;
+      function createHasher(Point, mapToCurve, def) {
+        if (typeof mapToCurve !== "function")
+          throw new Error("mapToCurve() must be defined");
+        return {
+          // Encodes byte string to elliptic curve.
+          // hash_to_curve from https://www.rfc-editor.org/rfc/rfc9380#section-3
+          hashToCurve(msg, options) {
+            const u = hash_to_field(msg, 2, { ...def, DST: def.DST, ...options });
+            const u0 = Point.fromAffine(mapToCurve(u[0]));
+            const u1 = Point.fromAffine(mapToCurve(u[1]));
+            const P = u0.add(u1).clearCofactor();
+            P.assertValidity();
+            return P;
+          },
+          // Encodes byte string to elliptic curve.
+          // encode_to_curve from https://www.rfc-editor.org/rfc/rfc9380#section-3
+          encodeToCurve(msg, options) {
+            const u = hash_to_field(msg, 1, { ...def, DST: def.encodeDST, ...options });
+            const P = Point.fromAffine(mapToCurve(u[0])).clearCofactor();
+            P.assertValidity();
+            return P;
+          }
+        };
+      }
+      exports.createHasher = createHasher;
+    }
+  });
+
+  // node_modules/@noble/curves/node_modules/@noble/hashes/hmac.js
+  var require_hmac = __commonJS({
+    "node_modules/@noble/curves/node_modules/@noble/hashes/hmac.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.hmac = exports.HMAC = void 0;
+      var _assert_js_1 = require_assert();
+      var utils_js_1 = require_utils2();
+      var HMAC = class extends utils_js_1.Hash {
+        constructor(hash, _key) {
+          super();
+          this.finished = false;
+          this.destroyed = false;
+          (0, _assert_js_1.hash)(hash);
+          const key = (0, utils_js_1.toBytes)(_key);
+          this.iHash = hash.create();
+          if (typeof this.iHash.update !== "function")
+            throw new Error("Expected instance of class which extends utils.Hash");
+          this.blockLen = this.iHash.blockLen;
+          this.outputLen = this.iHash.outputLen;
+          const blockLen = this.blockLen;
+          const pad = new Uint8Array(blockLen);
+          pad.set(key.length > blockLen ? hash.create().update(key).digest() : key);
+          for (let i = 0; i < pad.length; i++)
+            pad[i] ^= 54;
+          this.iHash.update(pad);
+          this.oHash = hash.create();
+          for (let i = 0; i < pad.length; i++)
+            pad[i] ^= 54 ^ 92;
+          this.oHash.update(pad);
+          pad.fill(0);
+        }
+        update(buf) {
+          (0, _assert_js_1.exists)(this);
+          this.iHash.update(buf);
+          return this;
+        }
+        digestInto(out) {
+          (0, _assert_js_1.exists)(this);
+          (0, _assert_js_1.bytes)(out, this.outputLen);
+          this.finished = true;
+          this.iHash.digestInto(out);
+          this.oHash.update(out);
+          this.oHash.digestInto(out);
+          this.destroy();
+        }
+        digest() {
+          const out = new Uint8Array(this.oHash.outputLen);
+          this.digestInto(out);
+          return out;
+        }
+        _cloneInto(to) {
+          to || (to = Object.create(Object.getPrototypeOf(this), {}));
+          const { oHash, iHash, finished, destroyed, blockLen, outputLen } = this;
+          to = to;
+          to.finished = finished;
+          to.destroyed = destroyed;
+          to.blockLen = blockLen;
+          to.outputLen = outputLen;
+          to.oHash = oHash._cloneInto(to.oHash);
+          to.iHash = iHash._cloneInto(to.iHash);
+          return to;
+        }
+        destroy() {
+          this.destroyed = true;
+          this.oHash.destroy();
+          this.iHash.destroy();
+        }
+      };
+      exports.HMAC = HMAC;
+      var hmac = (hash, key, message) => new HMAC(hash, key).update(message).digest();
+      exports.hmac = hmac;
+      exports.hmac.create = (hash, key) => new HMAC(hash, key);
+    }
+  });
+
+  // node_modules/@noble/curves/_shortw_utils.js
+  var require_shortw_utils = __commonJS({
+    "node_modules/@noble/curves/_shortw_utils.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.createCurve = exports.getHash = void 0;
+      var hmac_1 = require_hmac();
+      var utils_1 = require_utils2();
+      var weierstrass_js_1 = require_weierstrass();
+      function getHash(hash) {
+        return {
+          hash,
+          hmac: (key, ...msgs) => (0, hmac_1.hmac)(hash, key, (0, utils_1.concatBytes)(...msgs)),
+          randomBytes: utils_1.randomBytes
+        };
+      }
+      exports.getHash = getHash;
+      function createCurve(curveDef, defHash) {
+        const create = (hash) => (0, weierstrass_js_1.weierstrass)({ ...curveDef, ...getHash(hash) });
+        return Object.freeze({ ...create(defHash), create });
+      }
+      exports.createCurve = createCurve;
+    }
+  });
+
+  // node_modules/@noble/curves/secp256k1.js
+  var require_secp256k1 = __commonJS({
+    "node_modules/@noble/curves/secp256k1.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.encodeToCurve = exports.hashToCurve = exports.schnorr = exports.secp256k1 = void 0;
+      var sha256_1 = require_sha2562();
+      var utils_1 = require_utils2();
+      var modular_js_1 = require_modular();
+      var weierstrass_js_1 = require_weierstrass();
+      var utils_js_1 = require_utils3();
+      var hash_to_curve_js_1 = require_hash_to_curve();
+      var _shortw_utils_js_1 = require_shortw_utils();
+      var secp256k1P = BigInt("0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f");
+      var secp256k1N = BigInt("0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141");
+      var _1n = BigInt(1);
+      var _2n = BigInt(2);
+      var divNearest = (a, b) => (a + b / _2n) / b;
+      function sqrtMod(y) {
+        const P = secp256k1P;
+        const _3n = BigInt(3), _6n = BigInt(6), _11n = BigInt(11), _22n = BigInt(22);
+        const _23n = BigInt(23), _44n = BigInt(44), _88n = BigInt(88);
+        const b2 = y * y * y % P;
+        const b3 = b2 * b2 * y % P;
+        const b6 = (0, modular_js_1.pow2)(b3, _3n, P) * b3 % P;
+        const b9 = (0, modular_js_1.pow2)(b6, _3n, P) * b3 % P;
+        const b11 = (0, modular_js_1.pow2)(b9, _2n, P) * b2 % P;
+        const b22 = (0, modular_js_1.pow2)(b11, _11n, P) * b11 % P;
+        const b44 = (0, modular_js_1.pow2)(b22, _22n, P) * b22 % P;
+        const b88 = (0, modular_js_1.pow2)(b44, _44n, P) * b44 % P;
+        const b176 = (0, modular_js_1.pow2)(b88, _88n, P) * b88 % P;
+        const b220 = (0, modular_js_1.pow2)(b176, _44n, P) * b44 % P;
+        const b223 = (0, modular_js_1.pow2)(b220, _3n, P) * b3 % P;
+        const t1 = (0, modular_js_1.pow2)(b223, _23n, P) * b22 % P;
+        const t2 = (0, modular_js_1.pow2)(t1, _6n, P) * b2 % P;
+        const root = (0, modular_js_1.pow2)(t2, _2n, P);
+        if (!Fp.eql(Fp.sqr(root), y))
+          throw new Error("Cannot find square root");
+        return root;
+      }
+      var Fp = (0, modular_js_1.Field)(secp256k1P, void 0, void 0, { sqrt: sqrtMod });
+      exports.secp256k1 = (0, _shortw_utils_js_1.createCurve)({
+        a: BigInt(0),
+        b: BigInt(7),
+        Fp,
+        n: secp256k1N,
+        // Base point (x, y) aka generator point
+        Gx: BigInt("55066263022277343669578718895168534326250603453777594175500187360389116729240"),
+        Gy: BigInt("32670510020758816978083085130507043184471273380659243275938904335757337482424"),
+        h: BigInt(1),
+        lowS: true,
+        /**
+         * secp256k1 belongs to Koblitz curves: it has efficiently computable endomorphism.
+         * Endomorphism uses 2x less RAM, speeds up precomputation by 2x and ECDH / key recovery by 20%.
+         * For precomputed wNAF it trades off 1/2 init time & 1/3 ram for 20% perf hit.
+         * Explanation: https://gist.github.com/paulmillr/eb670806793e84df628a7c434a873066
+         */
+        endo: {
+          beta: BigInt("0x7ae96a2b657c07106e64479eac3434e99cf0497512f58995c1396c28719501ee"),
+          splitScalar: (k) => {
+            const n = secp256k1N;
+            const a1 = BigInt("0x3086d221a7d46bcde86c90e49284eb15");
+            const b1 = -_1n * BigInt("0xe4437ed6010e88286f547fa90abfe4c3");
+            const a2 = BigInt("0x114ca50f7a8e2f3f657c1108d9d44cfd8");
+            const b2 = a1;
+            const POW_2_128 = BigInt("0x100000000000000000000000000000000");
+            const c1 = divNearest(b2 * k, n);
+            const c2 = divNearest(-b1 * k, n);
+            let k1 = (0, modular_js_1.mod)(k - c1 * a1 - c2 * a2, n);
+            let k2 = (0, modular_js_1.mod)(-c1 * b1 - c2 * b2, n);
+            const k1neg = k1 > POW_2_128;
+            const k2neg = k2 > POW_2_128;
+            if (k1neg)
+              k1 = n - k1;
+            if (k2neg)
+              k2 = n - k2;
+            if (k1 > POW_2_128 || k2 > POW_2_128) {
+              throw new Error("splitScalar: Endomorphism failed, k=" + k);
+            }
+            return { k1neg, k1, k2neg, k2 };
+          }
+        }
+      }, sha256_1.sha256);
+      var _0n = BigInt(0);
+      var fe = (x) => typeof x === "bigint" && _0n < x && x < secp256k1P;
+      var ge = (x) => typeof x === "bigint" && _0n < x && x < secp256k1N;
+      var TAGGED_HASH_PREFIXES = {};
+      function taggedHash(tag, ...messages) {
+        let tagP = TAGGED_HASH_PREFIXES[tag];
+        if (tagP === void 0) {
+          const tagH = (0, sha256_1.sha256)(Uint8Array.from(tag, (c) => c.charCodeAt(0)));
+          tagP = (0, utils_js_1.concatBytes)(tagH, tagH);
+          TAGGED_HASH_PREFIXES[tag] = tagP;
+        }
+        return (0, sha256_1.sha256)((0, utils_js_1.concatBytes)(tagP, ...messages));
+      }
+      var pointToBytes = (point) => point.toRawBytes(true).slice(1);
+      var numTo32b = (n) => (0, utils_js_1.numberToBytesBE)(n, 32);
+      var modP = (x) => (0, modular_js_1.mod)(x, secp256k1P);
+      var modN = (x) => (0, modular_js_1.mod)(x, secp256k1N);
+      var Point = exports.secp256k1.ProjectivePoint;
+      var GmulAdd = (Q, a, b) => Point.BASE.multiplyAndAddUnsafe(Q, a, b);
+      function schnorrGetExtPubKey(priv) {
+        let d_ = exports.secp256k1.utils.normPrivateKeyToScalar(priv);
+        let p = Point.fromPrivateKey(d_);
+        const scalar = p.hasEvenY() ? d_ : modN(-d_);
+        return { scalar, bytes: pointToBytes(p) };
+      }
+      function lift_x(x) {
+        if (!fe(x))
+          throw new Error("bad x: need 0 < x < p");
+        const xx = modP(x * x);
+        const c = modP(xx * x + BigInt(7));
+        let y = sqrtMod(c);
+        if (y % _2n !== _0n)
+          y = modP(-y);
+        const p = new Point(x, y, _1n);
+        p.assertValidity();
+        return p;
+      }
+      function challenge(...args) {
+        return modN((0, utils_js_1.bytesToNumberBE)(taggedHash("BIP0340/challenge", ...args)));
+      }
+      function schnorrGetPublicKey(privateKey) {
+        return schnorrGetExtPubKey(privateKey).bytes;
+      }
+      function schnorrSign(message, privateKey, auxRand = (0, utils_1.randomBytes)(32)) {
+        const m = (0, utils_js_1.ensureBytes)("message", message);
+        const { bytes: px, scalar: d } = schnorrGetExtPubKey(privateKey);
+        const a = (0, utils_js_1.ensureBytes)("auxRand", auxRand, 32);
+        const t = numTo32b(d ^ (0, utils_js_1.bytesToNumberBE)(taggedHash("BIP0340/aux", a)));
+        const rand = taggedHash("BIP0340/nonce", t, px, m);
+        const k_ = modN((0, utils_js_1.bytesToNumberBE)(rand));
+        if (k_ === _0n)
+          throw new Error("sign failed: k is zero");
+        const { bytes: rx, scalar: k } = schnorrGetExtPubKey(k_);
+        const e = challenge(rx, px, m);
+        const sig = new Uint8Array(64);
+        sig.set(rx, 0);
+        sig.set(numTo32b(modN(k + e * d)), 32);
+        if (!schnorrVerify(sig, m, px))
+          throw new Error("sign: Invalid signature produced");
+        return sig;
+      }
+      function schnorrVerify(signature, message, publicKey) {
+        const sig = (0, utils_js_1.ensureBytes)("signature", signature, 64);
+        const m = (0, utils_js_1.ensureBytes)("message", message);
+        const pub = (0, utils_js_1.ensureBytes)("publicKey", publicKey, 32);
+        try {
+          const P = lift_x((0, utils_js_1.bytesToNumberBE)(pub));
+          const r = (0, utils_js_1.bytesToNumberBE)(sig.subarray(0, 32));
+          if (!fe(r))
+            return false;
+          const s = (0, utils_js_1.bytesToNumberBE)(sig.subarray(32, 64));
+          if (!ge(s))
+            return false;
+          const e = challenge(numTo32b(r), pointToBytes(P), m);
+          const R = GmulAdd(P, s, modN(-e));
+          if (!R || !R.hasEvenY() || R.toAffine().x !== r)
+            return false;
+          return true;
+        } catch (error) {
+          return false;
+        }
+      }
+      exports.schnorr = (() => ({
+        getPublicKey: schnorrGetPublicKey,
+        sign: schnorrSign,
+        verify: schnorrVerify,
+        utils: {
+          randomPrivateKey: exports.secp256k1.utils.randomPrivateKey,
+          lift_x,
+          pointToBytes,
+          numberToBytesBE: utils_js_1.numberToBytesBE,
+          bytesToNumberBE: utils_js_1.bytesToNumberBE,
+          taggedHash,
+          mod: modular_js_1.mod
+        }
+      }))();
+      var isoMap = /* @__PURE__ */ (() => (0, hash_to_curve_js_1.isogenyMap)(Fp, [
+        // xNum
+        [
+          "0x8e38e38e38e38e38e38e38e38e38e38e38e38e38e38e38e38e38e38daaaaa8c7",
+          "0x7d3d4c80bc321d5b9f315cea7fd44c5d595d2fc0bf63b92dfff1044f17c6581",
+          "0x534c328d23f234e6e2a413deca25caece4506144037c40314ecbd0b53d9dd262",
+          "0x8e38e38e38e38e38e38e38e38e38e38e38e38e38e38e38e38e38e38daaaaa88c"
+        ],
+        // xDen
+        [
+          "0xd35771193d94918a9ca34ccbb7b640dd86cd409542f8487d9fe6b745781eb49b",
+          "0xedadc6f64383dc1df7c4b2d51b54225406d36b641f5e41bbc52a56612a8c6d14",
+          "0x0000000000000000000000000000000000000000000000000000000000000001"
+          // LAST 1
+        ],
+        // yNum
+        [
+          "0x4bda12f684bda12f684bda12f684bda12f684bda12f684bda12f684b8e38e23c",
+          "0xc75e0c32d5cb7c0fa9d0a54b12a0a6d5647ab046d686da6fdffc90fc201d71a3",
+          "0x29a6194691f91a73715209ef6512e576722830a201be2018a765e85a9ecee931",
+          "0x2f684bda12f684bda12f684bda12f684bda12f684bda12f684bda12f38e38d84"
+        ],
+        // yDen
+        [
+          "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffff93b",
+          "0x7a06534bb8bdb49fd5e9e6632722c2989467c1bfc8e8d978dfb425d2685c2573",
+          "0x6484aa716545ca2cf3a70c3fa8fe337e0a3d21162f0d6299a7bf8192bfd2a76f",
+          "0x0000000000000000000000000000000000000000000000000000000000000001"
+          // LAST 1
+        ]
+      ].map((i) => i.map((j) => BigInt(j)))))();
+      var mapSWU = /* @__PURE__ */ (() => (0, weierstrass_js_1.mapToCurveSimpleSWU)(Fp, {
+        A: BigInt("0x3f8731abdd661adca08a5558f0f5d272e953d363cb6f0e5d405447c01a444533"),
+        B: BigInt("1771"),
+        Z: Fp.create(BigInt("-11"))
+      }))();
+      var htf = /* @__PURE__ */ (() => (0, hash_to_curve_js_1.createHasher)(exports.secp256k1.ProjectivePoint, (scalars) => {
+        const { x, y } = mapSWU(Fp.create(scalars[0]));
+        return isoMap(x, y);
+      }, {
+        DST: "secp256k1_XMD:SHA-256_SSWU_RO_",
+        encodeDST: "secp256k1_XMD:SHA-256_SSWU_NU_",
+        p: Fp.ORDER,
+        m: 1,
+        k: 128,
+        expand: "xmd",
+        hash: sha256_1.sha256
+      }))();
+      exports.hashToCurve = (() => htf.hashToCurve)();
+      exports.encodeToCurve = (() => htf.encodeToCurve)();
+    }
+  });
+
+  // node_modules/qrcode/lib/core/utils.js
+  var require_utils4 = __commonJS({
+    "node_modules/qrcode/lib/core/utils.js"(exports) {
+      var toSJISFunction;
+      var CODEWORDS_COUNT = [
+        0,
+        // Not used
+        26,
+        44,
+        70,
+        100,
+        134,
+        172,
+        196,
+        242,
+        292,
+        346,
+        404,
+        466,
+        532,
+        581,
+        655,
+        733,
+        815,
+        901,
+        991,
+        1085,
+        1156,
+        1258,
+        1364,
+        1474,
+        1588,
+        1706,
+        1828,
+        1921,
+        2051,
+        2185,
+        2323,
+        2465,
+        2611,
+        2761,
+        2876,
+        3034,
+        3196,
+        3362,
+        3532,
+        3706
+      ];
+      exports.getSymbolSize = function getSymbolSize(version) {
+        if (!version) throw new Error('"version" cannot be null or undefined');
+        if (version < 1 || version > 40) throw new Error('"version" should be in range from 1 to 40');
+        return version * 4 + 17;
+      };
+      exports.getSymbolTotalCodewords = function getSymbolTotalCodewords(version) {
+        return CODEWORDS_COUNT[version];
+      };
+      exports.getBCHDigit = function(data) {
+        let digit = 0;
+        while (data !== 0) {
+          digit++;
+          data >>>= 1;
+        }
+        return digit;
+      };
+      exports.setToSJISFunction = function setToSJISFunction(f) {
+        if (typeof f !== "function") {
+          throw new Error('"toSJISFunc" is not a valid function.');
+        }
+        toSJISFunction = f;
+      };
+      exports.isKanjiModeEnabled = function() {
+        return typeof toSJISFunction !== "undefined";
+      };
+      exports.toSJIS = function toSJIS(kanji) {
+        return toSJISFunction(kanji);
+      };
+    }
+  });
+
+  // node_modules/qrcode/lib/core/error-correction-level.js
+  var require_error_correction_level = __commonJS({
+    "node_modules/qrcode/lib/core/error-correction-level.js"(exports) {
+      exports.L = { bit: 1 };
+      exports.M = { bit: 0 };
+      exports.Q = { bit: 3 };
+      exports.H = { bit: 2 };
+      function fromString(string) {
+        if (typeof string !== "string") {
+          throw new Error("Param is not a string");
+        }
+        const lcStr = string.toLowerCase();
+        switch (lcStr) {
+          case "l":
+          case "low":
+            return exports.L;
+          case "m":
+          case "medium":
+            return exports.M;
+          case "q":
+          case "quartile":
+            return exports.Q;
+          case "h":
+          case "high":
+            return exports.H;
+          default:
+            throw new Error("Unknown EC Level: " + string);
+        }
+      }
+      exports.isValid = function isValid(level) {
+        return level && typeof level.bit !== "undefined" && level.bit >= 0 && level.bit < 4;
+      };
+      exports.from = function from(value, defaultValue) {
+        if (exports.isValid(value)) {
+          return value;
+        }
+        try {
+          return fromString(value);
+        } catch (e) {
+          return defaultValue;
+        }
+      };
+    }
+  });
+
+  // node_modules/qrcode/lib/core/bit-buffer.js
+  var require_bit_buffer = __commonJS({
+    "node_modules/qrcode/lib/core/bit-buffer.js"(exports, module) {
+      function BitBuffer() {
+        this.buffer = [];
+        this.length = 0;
+      }
+      BitBuffer.prototype = {
+        get: function(index) {
+          const bufIndex = Math.floor(index / 8);
+          return (this.buffer[bufIndex] >>> 7 - index % 8 & 1) === 1;
+        },
+        put: function(num, length) {
+          for (let i = 0; i < length; i++) {
+            this.putBit((num >>> length - i - 1 & 1) === 1);
+          }
+        },
+        getLengthInBits: function() {
+          return this.length;
+        },
+        putBit: function(bit) {
+          const bufIndex = Math.floor(this.length / 8);
+          if (this.buffer.length <= bufIndex) {
+            this.buffer.push(0);
+          }
+          if (bit) {
+            this.buffer[bufIndex] |= 128 >>> this.length % 8;
+          }
+          this.length++;
+        }
+      };
+      module.exports = BitBuffer;
+    }
+  });
+
+  // node_modules/qrcode/lib/core/bit-matrix.js
+  var require_bit_matrix = __commonJS({
+    "node_modules/qrcode/lib/core/bit-matrix.js"(exports, module) {
+      function BitMatrix(size) {
+        if (!size || size < 1) {
+          throw new Error("BitMatrix size must be defined and greater than 0");
+        }
+        this.size = size;
+        this.data = new Uint8Array(size * size);
+        this.reservedBit = new Uint8Array(size * size);
+      }
+      BitMatrix.prototype.set = function(row, col, value, reserved) {
+        const index = row * this.size + col;
+        this.data[index] = value;
+        if (reserved) this.reservedBit[index] = true;
+      };
+      BitMatrix.prototype.get = function(row, col) {
+        return this.data[row * this.size + col];
+      };
+      BitMatrix.prototype.xor = function(row, col, value) {
+        this.data[row * this.size + col] ^= value;
+      };
+      BitMatrix.prototype.isReserved = function(row, col) {
+        return this.reservedBit[row * this.size + col];
+      };
+      module.exports = BitMatrix;
+    }
+  });
+
+  // node_modules/qrcode/lib/core/alignment-pattern.js
+  var require_alignment_pattern = __commonJS({
+    "node_modules/qrcode/lib/core/alignment-pattern.js"(exports) {
+      var getSymbolSize = require_utils4().getSymbolSize;
+      exports.getRowColCoords = function getRowColCoords(version) {
+        if (version === 1) return [];
+        const posCount = Math.floor(version / 7) + 2;
+        const size = getSymbolSize(version);
+        const intervals = size === 145 ? 26 : Math.ceil((size - 13) / (2 * posCount - 2)) * 2;
+        const positions = [size - 7];
+        for (let i = 1; i < posCount - 1; i++) {
+          positions[i] = positions[i - 1] - intervals;
+        }
+        positions.push(6);
+        return positions.reverse();
+      };
+      exports.getPositions = function getPositions(version) {
+        const coords = [];
+        const pos = exports.getRowColCoords(version);
+        const posLength = pos.length;
+        for (let i = 0; i < posLength; i++) {
+          for (let j = 0; j < posLength; j++) {
+            if (i === 0 && j === 0 || // top-left
+            i === 0 && j === posLength - 1 || // bottom-left
+            i === posLength - 1 && j === 0) {
+              continue;
+            }
+            coords.push([pos[i], pos[j]]);
+          }
+        }
+        return coords;
+      };
+    }
+  });
+
+  // node_modules/qrcode/lib/core/finder-pattern.js
+  var require_finder_pattern = __commonJS({
+    "node_modules/qrcode/lib/core/finder-pattern.js"(exports) {
+      var getSymbolSize = require_utils4().getSymbolSize;
+      var FINDER_PATTERN_SIZE = 7;
+      exports.getPositions = function getPositions(version) {
+        const size = getSymbolSize(version);
+        return [
+          // top-left
+          [0, 0],
+          // top-right
+          [size - FINDER_PATTERN_SIZE, 0],
+          // bottom-left
+          [0, size - FINDER_PATTERN_SIZE]
+        ];
+      };
+    }
+  });
+
+  // node_modules/qrcode/lib/core/mask-pattern.js
+  var require_mask_pattern = __commonJS({
+    "node_modules/qrcode/lib/core/mask-pattern.js"(exports) {
+      exports.Patterns = {
+        PATTERN000: 0,
+        PATTERN001: 1,
+        PATTERN010: 2,
+        PATTERN011: 3,
+        PATTERN100: 4,
+        PATTERN101: 5,
+        PATTERN110: 6,
+        PATTERN111: 7
+      };
+      var PenaltyScores = {
+        N1: 3,
+        N2: 3,
+        N3: 40,
+        N4: 10
+      };
+      exports.isValid = function isValid(mask) {
+        return mask != null && mask !== "" && !isNaN(mask) && mask >= 0 && mask <= 7;
+      };
+      exports.from = function from(value) {
+        return exports.isValid(value) ? parseInt(value, 10) : void 0;
+      };
+      exports.getPenaltyN1 = function getPenaltyN1(data) {
+        const size = data.size;
+        let points = 0;
+        let sameCountCol = 0;
+        let sameCountRow = 0;
+        let lastCol = null;
+        let lastRow = null;
+        for (let row = 0; row < size; row++) {
+          sameCountCol = sameCountRow = 0;
+          lastCol = lastRow = null;
+          for (let col = 0; col < size; col++) {
+            let module2 = data.get(row, col);
+            if (module2 === lastCol) {
+              sameCountCol++;
+            } else {
+              if (sameCountCol >= 5) points += PenaltyScores.N1 + (sameCountCol - 5);
+              lastCol = module2;
+              sameCountCol = 1;
+            }
+            module2 = data.get(col, row);
+            if (module2 === lastRow) {
+              sameCountRow++;
+            } else {
+              if (sameCountRow >= 5) points += PenaltyScores.N1 + (sameCountRow - 5);
+              lastRow = module2;
+              sameCountRow = 1;
+            }
+          }
+          if (sameCountCol >= 5) points += PenaltyScores.N1 + (sameCountCol - 5);
+          if (sameCountRow >= 5) points += PenaltyScores.N1 + (sameCountRow - 5);
+        }
+        return points;
+      };
+      exports.getPenaltyN2 = function getPenaltyN2(data) {
+        const size = data.size;
+        let points = 0;
+        for (let row = 0; row < size - 1; row++) {
+          for (let col = 0; col < size - 1; col++) {
+            const last = data.get(row, col) + data.get(row, col + 1) + data.get(row + 1, col) + data.get(row + 1, col + 1);
+            if (last === 4 || last === 0) points++;
+          }
+        }
+        return points * PenaltyScores.N2;
+      };
+      exports.getPenaltyN3 = function getPenaltyN3(data) {
+        const size = data.size;
+        let points = 0;
+        let bitsCol = 0;
+        let bitsRow = 0;
+        for (let row = 0; row < size; row++) {
+          bitsCol = bitsRow = 0;
+          for (let col = 0; col < size; col++) {
+            bitsCol = bitsCol << 1 & 2047 | data.get(row, col);
+            if (col >= 10 && (bitsCol === 1488 || bitsCol === 93)) points++;
+            bitsRow = bitsRow << 1 & 2047 | data.get(col, row);
+            if (col >= 10 && (bitsRow === 1488 || bitsRow === 93)) points++;
+          }
+        }
+        return points * PenaltyScores.N3;
+      };
+      exports.getPenaltyN4 = function getPenaltyN4(data) {
+        let darkCount = 0;
+        const modulesCount = data.data.length;
+        for (let i = 0; i < modulesCount; i++) darkCount += data.data[i];
+        const k = Math.abs(Math.ceil(darkCount * 100 / modulesCount / 5) - 10);
+        return k * PenaltyScores.N4;
+      };
+      function getMaskAt(maskPattern, i, j) {
+        switch (maskPattern) {
+          case exports.Patterns.PATTERN000:
+            return (i + j) % 2 === 0;
+          case exports.Patterns.PATTERN001:
+            return i % 2 === 0;
+          case exports.Patterns.PATTERN010:
+            return j % 3 === 0;
+          case exports.Patterns.PATTERN011:
+            return (i + j) % 3 === 0;
+          case exports.Patterns.PATTERN100:
+            return (Math.floor(i / 2) + Math.floor(j / 3)) % 2 === 0;
+          case exports.Patterns.PATTERN101:
+            return i * j % 2 + i * j % 3 === 0;
+          case exports.Patterns.PATTERN110:
+            return (i * j % 2 + i * j % 3) % 2 === 0;
+          case exports.Patterns.PATTERN111:
+            return (i * j % 3 + (i + j) % 2) % 2 === 0;
+          default:
+            throw new Error("bad maskPattern:" + maskPattern);
+        }
+      }
+      exports.applyMask = function applyMask(pattern, data) {
+        const size = data.size;
+        for (let col = 0; col < size; col++) {
+          for (let row = 0; row < size; row++) {
+            if (data.isReserved(row, col)) continue;
+            data.xor(row, col, getMaskAt(pattern, row, col));
+          }
+        }
+      };
+      exports.getBestMask = function getBestMask(data, setupFormatFunc) {
+        const numPatterns = Object.keys(exports.Patterns).length;
+        let bestPattern = 0;
+        let lowerPenalty = Infinity;
+        for (let p = 0; p < numPatterns; p++) {
+          setupFormatFunc(p);
+          exports.applyMask(p, data);
+          const penalty = exports.getPenaltyN1(data) + exports.getPenaltyN2(data) + exports.getPenaltyN3(data) + exports.getPenaltyN4(data);
+          exports.applyMask(p, data);
+          if (penalty < lowerPenalty) {
+            lowerPenalty = penalty;
+            bestPattern = p;
+          }
+        }
+        return bestPattern;
+      };
+    }
+  });
+
+  // node_modules/qrcode/lib/core/error-correction-code.js
+  var require_error_correction_code = __commonJS({
+    "node_modules/qrcode/lib/core/error-correction-code.js"(exports) {
+      var ECLevel = require_error_correction_level();
+      var EC_BLOCKS_TABLE = [
+        // L  M  Q  H
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        2,
+        1,
+        2,
+        2,
+        4,
+        1,
+        2,
+        4,
+        4,
+        2,
+        4,
+        4,
+        4,
+        2,
+        4,
+        6,
+        5,
+        2,
+        4,
+        6,
+        6,
+        2,
+        5,
+        8,
+        8,
+        4,
+        5,
+        8,
+        8,
+        4,
+        5,
+        8,
+        11,
+        4,
+        8,
+        10,
+        11,
+        4,
+        9,
+        12,
+        16,
+        4,
+        9,
+        16,
+        16,
+        6,
+        10,
+        12,
+        18,
+        6,
+        10,
+        17,
+        16,
+        6,
+        11,
+        16,
+        19,
+        6,
+        13,
+        18,
+        21,
+        7,
+        14,
+        21,
+        25,
+        8,
+        16,
+        20,
+        25,
+        8,
+        17,
+        23,
+        25,
+        9,
+        17,
+        23,
+        34,
+        9,
+        18,
+        25,
+        30,
+        10,
+        20,
+        27,
+        32,
+        12,
+        21,
+        29,
+        35,
+        12,
+        23,
+        34,
+        37,
+        12,
+        25,
+        34,
+        40,
+        13,
+        26,
+        35,
+        42,
+        14,
+        28,
+        38,
+        45,
+        15,
+        29,
+        40,
+        48,
+        16,
+        31,
+        43,
+        51,
+        17,
+        33,
+        45,
+        54,
+        18,
+        35,
+        48,
+        57,
+        19,
+        37,
+        51,
+        60,
+        19,
+        38,
+        53,
+        63,
+        20,
+        40,
+        56,
+        66,
+        21,
+        43,
+        59,
+        70,
+        22,
+        45,
+        62,
+        74,
+        24,
+        47,
+        65,
+        77,
+        25,
+        49,
+        68,
+        81
+      ];
+      var EC_CODEWORDS_TABLE = [
+        // L  M  Q  H
+        7,
+        10,
+        13,
+        17,
+        10,
+        16,
+        22,
+        28,
+        15,
+        26,
+        36,
+        44,
+        20,
+        36,
+        52,
+        64,
+        26,
+        48,
+        72,
+        88,
+        36,
+        64,
+        96,
+        112,
+        40,
+        72,
+        108,
+        130,
+        48,
+        88,
+        132,
+        156,
+        60,
+        110,
+        160,
+        192,
+        72,
+        130,
+        192,
+        224,
+        80,
+        150,
+        224,
+        264,
+        96,
+        176,
+        260,
+        308,
+        104,
+        198,
+        288,
+        352,
+        120,
+        216,
+        320,
+        384,
+        132,
+        240,
+        360,
+        432,
+        144,
+        280,
+        408,
+        480,
+        168,
+        308,
+        448,
+        532,
+        180,
+        338,
+        504,
+        588,
+        196,
+        364,
+        546,
+        650,
+        224,
+        416,
+        600,
+        700,
+        224,
+        442,
+        644,
+        750,
+        252,
+        476,
+        690,
+        816,
+        270,
+        504,
+        750,
+        900,
+        300,
+        560,
+        810,
+        960,
+        312,
+        588,
+        870,
+        1050,
+        336,
+        644,
+        952,
+        1110,
+        360,
+        700,
+        1020,
+        1200,
+        390,
+        728,
+        1050,
+        1260,
+        420,
+        784,
+        1140,
+        1350,
+        450,
+        812,
+        1200,
+        1440,
+        480,
+        868,
+        1290,
+        1530,
+        510,
+        924,
+        1350,
+        1620,
+        540,
+        980,
+        1440,
+        1710,
+        570,
+        1036,
+        1530,
+        1800,
+        570,
+        1064,
+        1590,
+        1890,
+        600,
+        1120,
+        1680,
+        1980,
+        630,
+        1204,
+        1770,
+        2100,
+        660,
+        1260,
+        1860,
+        2220,
+        720,
+        1316,
+        1950,
+        2310,
+        750,
+        1372,
+        2040,
+        2430
+      ];
+      exports.getBlocksCount = function getBlocksCount(version, errorCorrectionLevel) {
+        switch (errorCorrectionLevel) {
+          case ECLevel.L:
+            return EC_BLOCKS_TABLE[(version - 1) * 4 + 0];
+          case ECLevel.M:
+            return EC_BLOCKS_TABLE[(version - 1) * 4 + 1];
+          case ECLevel.Q:
+            return EC_BLOCKS_TABLE[(version - 1) * 4 + 2];
+          case ECLevel.H:
+            return EC_BLOCKS_TABLE[(version - 1) * 4 + 3];
+          default:
+            return void 0;
+        }
+      };
+      exports.getTotalCodewordsCount = function getTotalCodewordsCount(version, errorCorrectionLevel) {
+        switch (errorCorrectionLevel) {
+          case ECLevel.L:
+            return EC_CODEWORDS_TABLE[(version - 1) * 4 + 0];
+          case ECLevel.M:
+            return EC_CODEWORDS_TABLE[(version - 1) * 4 + 1];
+          case ECLevel.Q:
+            return EC_CODEWORDS_TABLE[(version - 1) * 4 + 2];
+          case ECLevel.H:
+            return EC_CODEWORDS_TABLE[(version - 1) * 4 + 3];
+          default:
+            return void 0;
+        }
+      };
+    }
+  });
+
+  // node_modules/qrcode/lib/core/galois-field.js
+  var require_galois_field = __commonJS({
+    "node_modules/qrcode/lib/core/galois-field.js"(exports) {
+      var EXP_TABLE = new Uint8Array(512);
+      var LOG_TABLE = new Uint8Array(256);
+      (function initTables() {
+        let x = 1;
+        for (let i = 0; i < 255; i++) {
+          EXP_TABLE[i] = x;
+          LOG_TABLE[x] = i;
+          x <<= 1;
+          if (x & 256) {
+            x ^= 285;
+          }
+        }
+        for (let i = 255; i < 512; i++) {
+          EXP_TABLE[i] = EXP_TABLE[i - 255];
+        }
+      })();
+      exports.log = function log(n) {
+        if (n < 1) throw new Error("log(" + n + ")");
+        return LOG_TABLE[n];
+      };
+      exports.exp = function exp(n) {
+        return EXP_TABLE[n];
+      };
+      exports.mul = function mul(x, y) {
+        if (x === 0 || y === 0) return 0;
+        return EXP_TABLE[LOG_TABLE[x] + LOG_TABLE[y]];
+      };
+    }
+  });
+
+  // node_modules/qrcode/lib/core/polynomial.js
+  var require_polynomial = __commonJS({
+    "node_modules/qrcode/lib/core/polynomial.js"(exports) {
+      var GF = require_galois_field();
+      exports.mul = function mul(p1, p2) {
+        const coeff = new Uint8Array(p1.length + p2.length - 1);
+        for (let i = 0; i < p1.length; i++) {
+          for (let j = 0; j < p2.length; j++) {
+            coeff[i + j] ^= GF.mul(p1[i], p2[j]);
+          }
+        }
+        return coeff;
+      };
+      exports.mod = function mod(divident, divisor) {
+        let result = new Uint8Array(divident);
+        while (result.length - divisor.length >= 0) {
+          const coeff = result[0];
+          for (let i = 0; i < divisor.length; i++) {
+            result[i] ^= GF.mul(divisor[i], coeff);
+          }
+          let offset = 0;
+          while (offset < result.length && result[offset] === 0) offset++;
+          result = result.slice(offset);
+        }
+        return result;
+      };
+      exports.generateECPolynomial = function generateECPolynomial(degree) {
+        let poly = new Uint8Array([1]);
+        for (let i = 0; i < degree; i++) {
+          poly = exports.mul(poly, new Uint8Array([1, GF.exp(i)]));
+        }
+        return poly;
+      };
+    }
+  });
+
+  // node_modules/qrcode/lib/core/reed-solomon-encoder.js
+  var require_reed_solomon_encoder = __commonJS({
+    "node_modules/qrcode/lib/core/reed-solomon-encoder.js"(exports, module) {
+      var Polynomial = require_polynomial();
+      function ReedSolomonEncoder(degree) {
+        this.genPoly = void 0;
+        this.degree = degree;
+        if (this.degree) this.initialize(this.degree);
+      }
+      ReedSolomonEncoder.prototype.initialize = function initialize(degree) {
+        this.degree = degree;
+        this.genPoly = Polynomial.generateECPolynomial(this.degree);
+      };
+      ReedSolomonEncoder.prototype.encode = function encode(data) {
+        if (!this.genPoly) {
+          throw new Error("Encoder not initialized");
+        }
+        const paddedData = new Uint8Array(data.length + this.degree);
+        paddedData.set(data);
+        const remainder = Polynomial.mod(paddedData, this.genPoly);
+        const start = this.degree - remainder.length;
+        if (start > 0) {
+          const buff = new Uint8Array(this.degree);
+          buff.set(remainder, start);
+          return buff;
+        }
+        return remainder;
+      };
+      module.exports = ReedSolomonEncoder;
+    }
+  });
+
+  // node_modules/qrcode/lib/core/version-check.js
+  var require_version_check = __commonJS({
+    "node_modules/qrcode/lib/core/version-check.js"(exports) {
+      exports.isValid = function isValid(version) {
+        return !isNaN(version) && version >= 1 && version <= 40;
+      };
+    }
+  });
+
+  // node_modules/qrcode/lib/core/regex.js
+  var require_regex = __commonJS({
+    "node_modules/qrcode/lib/core/regex.js"(exports) {
+      var numeric = "[0-9]+";
+      var alphanumeric = "[A-Z $%*+\\-./:]+";
+      var kanji = "(?:[u3000-u303F]|[u3040-u309F]|[u30A0-u30FF]|[uFF00-uFFEF]|[u4E00-u9FAF]|[u2605-u2606]|[u2190-u2195]|u203B|[u2010u2015u2018u2019u2025u2026u201Cu201Du2225u2260]|[u0391-u0451]|[u00A7u00A8u00B1u00B4u00D7u00F7])+";
+      kanji = kanji.replace(/u/g, "\\u");
+      var byte = "(?:(?![A-Z0-9 $%*+\\-./:]|" + kanji + ")(?:.|[\r\n]))+";
+      exports.KANJI = new RegExp(kanji, "g");
+      exports.BYTE_KANJI = new RegExp("[^A-Z0-9 $%*+\\-./:]+", "g");
+      exports.BYTE = new RegExp(byte, "g");
+      exports.NUMERIC = new RegExp(numeric, "g");
+      exports.ALPHANUMERIC = new RegExp(alphanumeric, "g");
+      var TEST_KANJI = new RegExp("^" + kanji + "$");
+      var TEST_NUMERIC = new RegExp("^" + numeric + "$");
+      var TEST_ALPHANUMERIC = new RegExp("^[A-Z0-9 $%*+\\-./:]+$");
+      exports.testKanji = function testKanji(str) {
+        return TEST_KANJI.test(str);
+      };
+      exports.testNumeric = function testNumeric(str) {
+        return TEST_NUMERIC.test(str);
+      };
+      exports.testAlphanumeric = function testAlphanumeric(str) {
+        return TEST_ALPHANUMERIC.test(str);
+      };
+    }
+  });
+
+  // node_modules/qrcode/lib/core/mode.js
+  var require_mode = __commonJS({
+    "node_modules/qrcode/lib/core/mode.js"(exports) {
+      var VersionCheck = require_version_check();
+      var Regex = require_regex();
+      exports.NUMERIC = {
+        id: "Numeric",
+        bit: 1 << 0,
+        ccBits: [10, 12, 14]
+      };
+      exports.ALPHANUMERIC = {
+        id: "Alphanumeric",
+        bit: 1 << 1,
+        ccBits: [9, 11, 13]
+      };
+      exports.BYTE = {
+        id: "Byte",
+        bit: 1 << 2,
+        ccBits: [8, 16, 16]
+      };
+      exports.KANJI = {
+        id: "Kanji",
+        bit: 1 << 3,
+        ccBits: [8, 10, 12]
+      };
+      exports.MIXED = {
+        bit: -1
+      };
+      exports.getCharCountIndicator = function getCharCountIndicator(mode, version) {
+        if (!mode.ccBits) throw new Error("Invalid mode: " + mode);
+        if (!VersionCheck.isValid(version)) {
+          throw new Error("Invalid version: " + version);
+        }
+        if (version >= 1 && version < 10) return mode.ccBits[0];
+        else if (version < 27) return mode.ccBits[1];
+        return mode.ccBits[2];
+      };
+      exports.getBestModeForData = function getBestModeForData(dataStr) {
+        if (Regex.testNumeric(dataStr)) return exports.NUMERIC;
+        else if (Regex.testAlphanumeric(dataStr)) return exports.ALPHANUMERIC;
+        else if (Regex.testKanji(dataStr)) return exports.KANJI;
+        else return exports.BYTE;
+      };
+      exports.toString = function toString(mode) {
+        if (mode && mode.id) return mode.id;
+        throw new Error("Invalid mode");
+      };
+      exports.isValid = function isValid(mode) {
+        return mode && mode.bit && mode.ccBits;
+      };
+      function fromString(string) {
+        if (typeof string !== "string") {
+          throw new Error("Param is not a string");
+        }
+        const lcStr = string.toLowerCase();
+        switch (lcStr) {
+          case "numeric":
+            return exports.NUMERIC;
+          case "alphanumeric":
+            return exports.ALPHANUMERIC;
+          case "kanji":
+            return exports.KANJI;
+          case "byte":
+            return exports.BYTE;
+          default:
+            throw new Error("Unknown mode: " + string);
+        }
+      }
+      exports.from = function from(value, defaultValue) {
+        if (exports.isValid(value)) {
+          return value;
+        }
+        try {
+          return fromString(value);
+        } catch (e) {
+          return defaultValue;
+        }
+      };
+    }
+  });
+
+  // node_modules/qrcode/lib/core/version.js
+  var require_version = __commonJS({
+    "node_modules/qrcode/lib/core/version.js"(exports) {
+      var Utils = require_utils4();
+      var ECCode = require_error_correction_code();
+      var ECLevel = require_error_correction_level();
+      var Mode = require_mode();
+      var VersionCheck = require_version_check();
+      var G18 = 1 << 12 | 1 << 11 | 1 << 10 | 1 << 9 | 1 << 8 | 1 << 5 | 1 << 2 | 1 << 0;
+      var G18_BCH = Utils.getBCHDigit(G18);
+      function getBestVersionForDataLength(mode, length, errorCorrectionLevel) {
+        for (let currentVersion = 1; currentVersion <= 40; currentVersion++) {
+          if (length <= exports.getCapacity(currentVersion, errorCorrectionLevel, mode)) {
+            return currentVersion;
+          }
+        }
+        return void 0;
+      }
+      function getReservedBitsCount(mode, version) {
+        return Mode.getCharCountIndicator(mode, version) + 4;
+      }
+      function getTotalBitsFromDataArray(segments, version) {
+        let totalBits = 0;
+        segments.forEach(function(data) {
+          const reservedBits = getReservedBitsCount(data.mode, version);
+          totalBits += reservedBits + data.getBitsLength();
+        });
+        return totalBits;
+      }
+      function getBestVersionForMixedData(segments, errorCorrectionLevel) {
+        for (let currentVersion = 1; currentVersion <= 40; currentVersion++) {
+          const length = getTotalBitsFromDataArray(segments, currentVersion);
+          if (length <= exports.getCapacity(currentVersion, errorCorrectionLevel, Mode.MIXED)) {
+            return currentVersion;
+          }
+        }
+        return void 0;
+      }
+      exports.from = function from(value, defaultValue) {
+        if (VersionCheck.isValid(value)) {
+          return parseInt(value, 10);
+        }
+        return defaultValue;
+      };
+      exports.getCapacity = function getCapacity(version, errorCorrectionLevel, mode) {
+        if (!VersionCheck.isValid(version)) {
+          throw new Error("Invalid QR Code version");
+        }
+        if (typeof mode === "undefined") mode = Mode.BYTE;
+        const totalCodewords = Utils.getSymbolTotalCodewords(version);
+        const ecTotalCodewords = ECCode.getTotalCodewordsCount(version, errorCorrectionLevel);
+        const dataTotalCodewordsBits = (totalCodewords - ecTotalCodewords) * 8;
+        if (mode === Mode.MIXED) return dataTotalCodewordsBits;
+        const usableBits = dataTotalCodewordsBits - getReservedBitsCount(mode, version);
+        switch (mode) {
+          case Mode.NUMERIC:
+            return Math.floor(usableBits / 10 * 3);
+          case Mode.ALPHANUMERIC:
+            return Math.floor(usableBits / 11 * 2);
+          case Mode.KANJI:
+            return Math.floor(usableBits / 13);
+          case Mode.BYTE:
+          default:
+            return Math.floor(usableBits / 8);
+        }
+      };
+      exports.getBestVersionForData = function getBestVersionForData(data, errorCorrectionLevel) {
+        let seg;
+        const ecl = ECLevel.from(errorCorrectionLevel, ECLevel.M);
+        if (Array.isArray(data)) {
+          if (data.length > 1) {
+            return getBestVersionForMixedData(data, ecl);
+          }
+          if (data.length === 0) {
+            return 1;
+          }
+          seg = data[0];
+        } else {
+          seg = data;
+        }
+        return getBestVersionForDataLength(seg.mode, seg.getLength(), ecl);
+      };
+      exports.getEncodedBits = function getEncodedBits(version) {
+        if (!VersionCheck.isValid(version) || version < 7) {
+          throw new Error("Invalid QR Code version");
+        }
+        let d = version << 12;
+        while (Utils.getBCHDigit(d) - G18_BCH >= 0) {
+          d ^= G18 << Utils.getBCHDigit(d) - G18_BCH;
+        }
+        return version << 12 | d;
+      };
+    }
+  });
+
+  // node_modules/qrcode/lib/core/format-info.js
+  var require_format_info = __commonJS({
+    "node_modules/qrcode/lib/core/format-info.js"(exports) {
+      var Utils = require_utils4();
+      var G15 = 1 << 10 | 1 << 8 | 1 << 5 | 1 << 4 | 1 << 2 | 1 << 1 | 1 << 0;
+      var G15_MASK = 1 << 14 | 1 << 12 | 1 << 10 | 1 << 4 | 1 << 1;
+      var G15_BCH = Utils.getBCHDigit(G15);
+      exports.getEncodedBits = function getEncodedBits(errorCorrectionLevel, mask) {
+        const data = errorCorrectionLevel.bit << 3 | mask;
+        let d = data << 10;
+        while (Utils.getBCHDigit(d) - G15_BCH >= 0) {
+          d ^= G15 << Utils.getBCHDigit(d) - G15_BCH;
+        }
+        return (data << 10 | d) ^ G15_MASK;
+      };
+    }
+  });
+
+  // node_modules/qrcode/lib/core/numeric-data.js
+  var require_numeric_data = __commonJS({
+    "node_modules/qrcode/lib/core/numeric-data.js"(exports, module) {
+      var Mode = require_mode();
+      function NumericData(data) {
+        this.mode = Mode.NUMERIC;
+        this.data = data.toString();
+      }
+      NumericData.getBitsLength = function getBitsLength(length) {
+        return 10 * Math.floor(length / 3) + (length % 3 ? length % 3 * 3 + 1 : 0);
+      };
+      NumericData.prototype.getLength = function getLength() {
+        return this.data.length;
+      };
+      NumericData.prototype.getBitsLength = function getBitsLength() {
+        return NumericData.getBitsLength(this.data.length);
+      };
+      NumericData.prototype.write = function write(bitBuffer) {
+        let i, group, value;
+        for (i = 0; i + 3 <= this.data.length; i += 3) {
+          group = this.data.substr(i, 3);
+          value = parseInt(group, 10);
+          bitBuffer.put(value, 10);
+        }
+        const remainingNum = this.data.length - i;
+        if (remainingNum > 0) {
+          group = this.data.substr(i);
+          value = parseInt(group, 10);
+          bitBuffer.put(value, remainingNum * 3 + 1);
+        }
+      };
+      module.exports = NumericData;
+    }
+  });
+
+  // node_modules/qrcode/lib/core/alphanumeric-data.js
+  var require_alphanumeric_data = __commonJS({
+    "node_modules/qrcode/lib/core/alphanumeric-data.js"(exports, module) {
+      var Mode = require_mode();
+      var ALPHA_NUM_CHARS = [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "A",
+        "B",
+        "C",
+        "D",
+        "E",
+        "F",
+        "G",
+        "H",
+        "I",
+        "J",
+        "K",
+        "L",
+        "M",
+        "N",
+        "O",
+        "P",
+        "Q",
+        "R",
+        "S",
+        "T",
+        "U",
+        "V",
+        "W",
+        "X",
+        "Y",
+        "Z",
+        " ",
+        "$",
+        "%",
+        "*",
+        "+",
+        "-",
+        ".",
+        "/",
+        ":"
+      ];
+      function AlphanumericData(data) {
+        this.mode = Mode.ALPHANUMERIC;
+        this.data = data;
+      }
+      AlphanumericData.getBitsLength = function getBitsLength(length) {
+        return 11 * Math.floor(length / 2) + 6 * (length % 2);
+      };
+      AlphanumericData.prototype.getLength = function getLength() {
+        return this.data.length;
+      };
+      AlphanumericData.prototype.getBitsLength = function getBitsLength() {
+        return AlphanumericData.getBitsLength(this.data.length);
+      };
+      AlphanumericData.prototype.write = function write(bitBuffer) {
+        let i;
+        for (i = 0; i + 2 <= this.data.length; i += 2) {
+          let value = ALPHA_NUM_CHARS.indexOf(this.data[i]) * 45;
+          value += ALPHA_NUM_CHARS.indexOf(this.data[i + 1]);
+          bitBuffer.put(value, 11);
+        }
+        if (this.data.length % 2) {
+          bitBuffer.put(ALPHA_NUM_CHARS.indexOf(this.data[i]), 6);
+        }
+      };
+      module.exports = AlphanumericData;
+    }
+  });
+
+  // node_modules/qrcode/lib/core/byte-data.js
+  var require_byte_data = __commonJS({
+    "node_modules/qrcode/lib/core/byte-data.js"(exports, module) {
+      var Mode = require_mode();
+      function ByteData(data) {
+        this.mode = Mode.BYTE;
+        if (typeof data === "string") {
+          this.data = new TextEncoder().encode(data);
+        } else {
+          this.data = new Uint8Array(data);
+        }
+      }
+      ByteData.getBitsLength = function getBitsLength(length) {
+        return length * 8;
+      };
+      ByteData.prototype.getLength = function getLength() {
+        return this.data.length;
+      };
+      ByteData.prototype.getBitsLength = function getBitsLength() {
+        return ByteData.getBitsLength(this.data.length);
+      };
+      ByteData.prototype.write = function(bitBuffer) {
+        for (let i = 0, l = this.data.length; i < l; i++) {
+          bitBuffer.put(this.data[i], 8);
+        }
+      };
+      module.exports = ByteData;
+    }
+  });
+
+  // node_modules/qrcode/lib/core/kanji-data.js
+  var require_kanji_data = __commonJS({
+    "node_modules/qrcode/lib/core/kanji-data.js"(exports, module) {
+      var Mode = require_mode();
+      var Utils = require_utils4();
+      function KanjiData(data) {
+        this.mode = Mode.KANJI;
+        this.data = data;
+      }
+      KanjiData.getBitsLength = function getBitsLength(length) {
+        return length * 13;
+      };
+      KanjiData.prototype.getLength = function getLength() {
+        return this.data.length;
+      };
+      KanjiData.prototype.getBitsLength = function getBitsLength() {
+        return KanjiData.getBitsLength(this.data.length);
+      };
+      KanjiData.prototype.write = function(bitBuffer) {
+        let i;
+        for (i = 0; i < this.data.length; i++) {
+          let value = Utils.toSJIS(this.data[i]);
+          if (value >= 33088 && value <= 40956) {
+            value -= 33088;
+          } else if (value >= 57408 && value <= 60351) {
+            value -= 49472;
+          } else {
+            throw new Error(
+              "Invalid SJIS character: " + this.data[i] + "\nMake sure your charset is UTF-8"
+            );
+          }
+          value = (value >>> 8 & 255) * 192 + (value & 255);
+          bitBuffer.put(value, 13);
+        }
+      };
+      module.exports = KanjiData;
+    }
+  });
+
+  // node_modules/dijkstrajs/dijkstra.js
+  var require_dijkstra = __commonJS({
+    "node_modules/dijkstrajs/dijkstra.js"(exports, module) {
+      "use strict";
+      var dijkstra = {
+        single_source_shortest_paths: function(graph, s, d) {
+          var predecessors = {};
+          var costs = {};
+          costs[s] = 0;
+          var open = dijkstra.PriorityQueue.make();
+          open.push(s, 0);
+          var closest, u, v, cost_of_s_to_u, adjacent_nodes, cost_of_e, cost_of_s_to_u_plus_cost_of_e, cost_of_s_to_v, first_visit;
+          while (!open.empty()) {
+            closest = open.pop();
+            u = closest.value;
+            cost_of_s_to_u = closest.cost;
+            adjacent_nodes = graph[u] || {};
+            for (v in adjacent_nodes) {
+              if (adjacent_nodes.hasOwnProperty(v)) {
+                cost_of_e = adjacent_nodes[v];
+                cost_of_s_to_u_plus_cost_of_e = cost_of_s_to_u + cost_of_e;
+                cost_of_s_to_v = costs[v];
+                first_visit = typeof costs[v] === "undefined";
+                if (first_visit || cost_of_s_to_v > cost_of_s_to_u_plus_cost_of_e) {
+                  costs[v] = cost_of_s_to_u_plus_cost_of_e;
+                  open.push(v, cost_of_s_to_u_plus_cost_of_e);
+                  predecessors[v] = u;
+                }
+              }
+            }
+          }
+          if (typeof d !== "undefined" && typeof costs[d] === "undefined") {
+            var msg = ["Could not find a path from ", s, " to ", d, "."].join("");
+            throw new Error(msg);
+          }
+          return predecessors;
+        },
+        extract_shortest_path_from_predecessor_list: function(predecessors, d) {
+          var nodes = [];
+          var u = d;
+          var predecessor;
+          while (u) {
+            nodes.push(u);
+            predecessor = predecessors[u];
+            u = predecessors[u];
+          }
+          nodes.reverse();
+          return nodes;
+        },
+        find_path: function(graph, s, d) {
+          var predecessors = dijkstra.single_source_shortest_paths(graph, s, d);
+          return dijkstra.extract_shortest_path_from_predecessor_list(
+            predecessors,
+            d
+          );
+        },
+        /**
+         * A very naive priority queue implementation.
+         */
+        PriorityQueue: {
+          make: function(opts) {
+            var T = dijkstra.PriorityQueue, t = {}, key;
+            opts = opts || {};
+            for (key in T) {
+              if (T.hasOwnProperty(key)) {
+                t[key] = T[key];
+              }
+            }
+            t.queue = [];
+            t.sorter = opts.sorter || T.default_sorter;
+            return t;
+          },
+          default_sorter: function(a, b) {
+            return a.cost - b.cost;
+          },
+          /**
+           * Add a new item to the queue and ensure the highest priority element
+           * is at the front of the queue.
+           */
+          push: function(value, cost) {
+            var item = { value, cost };
+            this.queue.push(item);
+            this.queue.sort(this.sorter);
+          },
+          /**
+           * Return the highest priority element in the queue.
+           */
+          pop: function() {
+            return this.queue.shift();
+          },
+          empty: function() {
+            return this.queue.length === 0;
+          }
+        }
+      };
+      if (typeof module !== "undefined") {
+        module.exports = dijkstra;
+      }
+    }
+  });
+
+  // node_modules/qrcode/lib/core/segments.js
+  var require_segments = __commonJS({
+    "node_modules/qrcode/lib/core/segments.js"(exports) {
+      var Mode = require_mode();
+      var NumericData = require_numeric_data();
+      var AlphanumericData = require_alphanumeric_data();
+      var ByteData = require_byte_data();
+      var KanjiData = require_kanji_data();
+      var Regex = require_regex();
+      var Utils = require_utils4();
+      var dijkstra = require_dijkstra();
+      function getStringByteLength(str) {
+        return unescape(encodeURIComponent(str)).length;
+      }
+      function getSegments(regex, mode, str) {
+        const segments = [];
+        let result;
+        while ((result = regex.exec(str)) !== null) {
+          segments.push({
+            data: result[0],
+            index: result.index,
+            mode,
+            length: result[0].length
+          });
+        }
+        return segments;
+      }
+      function getSegmentsFromString(dataStr) {
+        const numSegs = getSegments(Regex.NUMERIC, Mode.NUMERIC, dataStr);
+        const alphaNumSegs = getSegments(Regex.ALPHANUMERIC, Mode.ALPHANUMERIC, dataStr);
+        let byteSegs;
+        let kanjiSegs;
+        if (Utils.isKanjiModeEnabled()) {
+          byteSegs = getSegments(Regex.BYTE, Mode.BYTE, dataStr);
+          kanjiSegs = getSegments(Regex.KANJI, Mode.KANJI, dataStr);
+        } else {
+          byteSegs = getSegments(Regex.BYTE_KANJI, Mode.BYTE, dataStr);
+          kanjiSegs = [];
+        }
+        const segs = numSegs.concat(alphaNumSegs, byteSegs, kanjiSegs);
+        return segs.sort(function(s1, s2) {
+          return s1.index - s2.index;
+        }).map(function(obj) {
+          return {
+            data: obj.data,
+            mode: obj.mode,
+            length: obj.length
+          };
+        });
+      }
+      function getSegmentBitsLength(length, mode) {
+        switch (mode) {
+          case Mode.NUMERIC:
+            return NumericData.getBitsLength(length);
+          case Mode.ALPHANUMERIC:
+            return AlphanumericData.getBitsLength(length);
+          case Mode.KANJI:
+            return KanjiData.getBitsLength(length);
+          case Mode.BYTE:
+            return ByteData.getBitsLength(length);
+        }
+      }
+      function mergeSegments(segs) {
+        return segs.reduce(function(acc, curr) {
+          const prevSeg = acc.length - 1 >= 0 ? acc[acc.length - 1] : null;
+          if (prevSeg && prevSeg.mode === curr.mode) {
+            acc[acc.length - 1].data += curr.data;
+            return acc;
+          }
+          acc.push(curr);
+          return acc;
+        }, []);
+      }
+      function buildNodes(segs) {
+        const nodes = [];
+        for (let i = 0; i < segs.length; i++) {
+          const seg = segs[i];
+          switch (seg.mode) {
+            case Mode.NUMERIC:
+              nodes.push([
+                seg,
+                { data: seg.data, mode: Mode.ALPHANUMERIC, length: seg.length },
+                { data: seg.data, mode: Mode.BYTE, length: seg.length }
+              ]);
+              break;
+            case Mode.ALPHANUMERIC:
+              nodes.push([
+                seg,
+                { data: seg.data, mode: Mode.BYTE, length: seg.length }
+              ]);
+              break;
+            case Mode.KANJI:
+              nodes.push([
+                seg,
+                { data: seg.data, mode: Mode.BYTE, length: getStringByteLength(seg.data) }
+              ]);
+              break;
+            case Mode.BYTE:
+              nodes.push([
+                { data: seg.data, mode: Mode.BYTE, length: getStringByteLength(seg.data) }
+              ]);
+          }
+        }
+        return nodes;
+      }
+      function buildGraph(nodes, version) {
+        const table = {};
+        const graph = { start: {} };
+        let prevNodeIds = ["start"];
+        for (let i = 0; i < nodes.length; i++) {
+          const nodeGroup = nodes[i];
+          const currentNodeIds = [];
+          for (let j = 0; j < nodeGroup.length; j++) {
+            const node = nodeGroup[j];
+            const key = "" + i + j;
+            currentNodeIds.push(key);
+            table[key] = { node, lastCount: 0 };
+            graph[key] = {};
+            for (let n = 0; n < prevNodeIds.length; n++) {
+              const prevNodeId = prevNodeIds[n];
+              if (table[prevNodeId] && table[prevNodeId].node.mode === node.mode) {
+                graph[prevNodeId][key] = getSegmentBitsLength(table[prevNodeId].lastCount + node.length, node.mode) - getSegmentBitsLength(table[prevNodeId].lastCount, node.mode);
+                table[prevNodeId].lastCount += node.length;
+              } else {
+                if (table[prevNodeId]) table[prevNodeId].lastCount = node.length;
+                graph[prevNodeId][key] = getSegmentBitsLength(node.length, node.mode) + 4 + Mode.getCharCountIndicator(node.mode, version);
+              }
+            }
+          }
+          prevNodeIds = currentNodeIds;
+        }
+        for (let n = 0; n < prevNodeIds.length; n++) {
+          graph[prevNodeIds[n]].end = 0;
+        }
+        return { map: graph, table };
+      }
+      function buildSingleSegment(data, modesHint) {
+        let mode;
+        const bestMode = Mode.getBestModeForData(data);
+        mode = Mode.from(modesHint, bestMode);
+        if (mode !== Mode.BYTE && mode.bit < bestMode.bit) {
+          throw new Error('"' + data + '" cannot be encoded with mode ' + Mode.toString(mode) + ".\n Suggested mode is: " + Mode.toString(bestMode));
+        }
+        if (mode === Mode.KANJI && !Utils.isKanjiModeEnabled()) {
+          mode = Mode.BYTE;
+        }
+        switch (mode) {
+          case Mode.NUMERIC:
+            return new NumericData(data);
+          case Mode.ALPHANUMERIC:
+            return new AlphanumericData(data);
+          case Mode.KANJI:
+            return new KanjiData(data);
+          case Mode.BYTE:
+            return new ByteData(data);
+        }
+      }
+      exports.fromArray = function fromArray(array) {
+        return array.reduce(function(acc, seg) {
+          if (typeof seg === "string") {
+            acc.push(buildSingleSegment(seg, null));
+          } else if (seg.data) {
+            acc.push(buildSingleSegment(seg.data, seg.mode));
+          }
+          return acc;
+        }, []);
+      };
+      exports.fromString = function fromString(data, version) {
+        const segs = getSegmentsFromString(data, Utils.isKanjiModeEnabled());
+        const nodes = buildNodes(segs);
+        const graph = buildGraph(nodes, version);
+        const path = dijkstra.find_path(graph.map, "start", "end");
+        const optimizedSegs = [];
+        for (let i = 1; i < path.length - 1; i++) {
+          optimizedSegs.push(graph.table[path[i]].node);
+        }
+        return exports.fromArray(mergeSegments(optimizedSegs));
+      };
+      exports.rawSplit = function rawSplit(data) {
+        return exports.fromArray(
+          getSegmentsFromString(data, Utils.isKanjiModeEnabled())
+        );
+      };
+    }
+  });
+
+  // node_modules/qrcode/lib/core/qrcode.js
+  var require_qrcode = __commonJS({
+    "node_modules/qrcode/lib/core/qrcode.js"(exports) {
+      var Utils = require_utils4();
+      var ECLevel = require_error_correction_level();
+      var BitBuffer = require_bit_buffer();
+      var BitMatrix = require_bit_matrix();
+      var AlignmentPattern = require_alignment_pattern();
+      var FinderPattern = require_finder_pattern();
+      var MaskPattern = require_mask_pattern();
+      var ECCode = require_error_correction_code();
+      var ReedSolomonEncoder = require_reed_solomon_encoder();
+      var Version = require_version();
+      var FormatInfo = require_format_info();
+      var Mode = require_mode();
+      var Segments = require_segments();
+      function setupFinderPattern(matrix, version) {
+        const size = matrix.size;
+        const pos = FinderPattern.getPositions(version);
+        for (let i = 0; i < pos.length; i++) {
+          const row = pos[i][0];
+          const col = pos[i][1];
+          for (let r = -1; r <= 7; r++) {
+            if (row + r <= -1 || size <= row + r) continue;
+            for (let c = -1; c <= 7; c++) {
+              if (col + c <= -1 || size <= col + c) continue;
+              if (r >= 0 && r <= 6 && (c === 0 || c === 6) || c >= 0 && c <= 6 && (r === 0 || r === 6) || r >= 2 && r <= 4 && c >= 2 && c <= 4) {
+                matrix.set(row + r, col + c, true, true);
+              } else {
+                matrix.set(row + r, col + c, false, true);
+              }
+            }
+          }
+        }
+      }
+      function setupTimingPattern(matrix) {
+        const size = matrix.size;
+        for (let r = 8; r < size - 8; r++) {
+          const value = r % 2 === 0;
+          matrix.set(r, 6, value, true);
+          matrix.set(6, r, value, true);
+        }
+      }
+      function setupAlignmentPattern(matrix, version) {
+        const pos = AlignmentPattern.getPositions(version);
+        for (let i = 0; i < pos.length; i++) {
+          const row = pos[i][0];
+          const col = pos[i][1];
+          for (let r = -2; r <= 2; r++) {
+            for (let c = -2; c <= 2; c++) {
+              if (r === -2 || r === 2 || c === -2 || c === 2 || r === 0 && c === 0) {
+                matrix.set(row + r, col + c, true, true);
+              } else {
+                matrix.set(row + r, col + c, false, true);
+              }
+            }
+          }
+        }
+      }
+      function setupVersionInfo(matrix, version) {
+        const size = matrix.size;
+        const bits = Version.getEncodedBits(version);
+        let row, col, mod;
+        for (let i = 0; i < 18; i++) {
+          row = Math.floor(i / 3);
+          col = i % 3 + size - 8 - 3;
+          mod = (bits >> i & 1) === 1;
+          matrix.set(row, col, mod, true);
+          matrix.set(col, row, mod, true);
+        }
+      }
+      function setupFormatInfo(matrix, errorCorrectionLevel, maskPattern) {
+        const size = matrix.size;
+        const bits = FormatInfo.getEncodedBits(errorCorrectionLevel, maskPattern);
+        let i, mod;
+        for (i = 0; i < 15; i++) {
+          mod = (bits >> i & 1) === 1;
+          if (i < 6) {
+            matrix.set(i, 8, mod, true);
+          } else if (i < 8) {
+            matrix.set(i + 1, 8, mod, true);
+          } else {
+            matrix.set(size - 15 + i, 8, mod, true);
+          }
+          if (i < 8) {
+            matrix.set(8, size - i - 1, mod, true);
+          } else if (i < 9) {
+            matrix.set(8, 15 - i - 1 + 1, mod, true);
+          } else {
+            matrix.set(8, 15 - i - 1, mod, true);
+          }
+        }
+        matrix.set(size - 8, 8, 1, true);
+      }
+      function setupData(matrix, data) {
+        const size = matrix.size;
+        let inc = -1;
+        let row = size - 1;
+        let bitIndex = 7;
+        let byteIndex = 0;
+        for (let col = size - 1; col > 0; col -= 2) {
+          if (col === 6) col--;
+          while (true) {
+            for (let c = 0; c < 2; c++) {
+              if (!matrix.isReserved(row, col - c)) {
+                let dark = false;
+                if (byteIndex < data.length) {
+                  dark = (data[byteIndex] >>> bitIndex & 1) === 1;
+                }
+                matrix.set(row, col - c, dark);
+                bitIndex--;
+                if (bitIndex === -1) {
+                  byteIndex++;
+                  bitIndex = 7;
+                }
+              }
+            }
+            row += inc;
+            if (row < 0 || size <= row) {
+              row -= inc;
+              inc = -inc;
+              break;
+            }
+          }
+        }
+      }
+      function createData(version, errorCorrectionLevel, segments) {
+        const buffer = new BitBuffer();
+        segments.forEach(function(data) {
+          buffer.put(data.mode.bit, 4);
+          buffer.put(data.getLength(), Mode.getCharCountIndicator(data.mode, version));
+          data.write(buffer);
+        });
+        const totalCodewords = Utils.getSymbolTotalCodewords(version);
+        const ecTotalCodewords = ECCode.getTotalCodewordsCount(version, errorCorrectionLevel);
+        const dataTotalCodewordsBits = (totalCodewords - ecTotalCodewords) * 8;
+        if (buffer.getLengthInBits() + 4 <= dataTotalCodewordsBits) {
+          buffer.put(0, 4);
+        }
+        while (buffer.getLengthInBits() % 8 !== 0) {
+          buffer.putBit(0);
+        }
+        const remainingByte = (dataTotalCodewordsBits - buffer.getLengthInBits()) / 8;
+        for (let i = 0; i < remainingByte; i++) {
+          buffer.put(i % 2 ? 17 : 236, 8);
+        }
+        return createCodewords(buffer, version, errorCorrectionLevel);
+      }
+      function createCodewords(bitBuffer, version, errorCorrectionLevel) {
+        const totalCodewords = Utils.getSymbolTotalCodewords(version);
+        const ecTotalCodewords = ECCode.getTotalCodewordsCount(version, errorCorrectionLevel);
+        const dataTotalCodewords = totalCodewords - ecTotalCodewords;
+        const ecTotalBlocks = ECCode.getBlocksCount(version, errorCorrectionLevel);
+        const blocksInGroup2 = totalCodewords % ecTotalBlocks;
+        const blocksInGroup1 = ecTotalBlocks - blocksInGroup2;
+        const totalCodewordsInGroup1 = Math.floor(totalCodewords / ecTotalBlocks);
+        const dataCodewordsInGroup1 = Math.floor(dataTotalCodewords / ecTotalBlocks);
+        const dataCodewordsInGroup2 = dataCodewordsInGroup1 + 1;
+        const ecCount = totalCodewordsInGroup1 - dataCodewordsInGroup1;
+        const rs = new ReedSolomonEncoder(ecCount);
+        let offset = 0;
+        const dcData = new Array(ecTotalBlocks);
+        const ecData = new Array(ecTotalBlocks);
+        let maxDataSize = 0;
+        const buffer = new Uint8Array(bitBuffer.buffer);
+        for (let b = 0; b < ecTotalBlocks; b++) {
+          const dataSize = b < blocksInGroup1 ? dataCodewordsInGroup1 : dataCodewordsInGroup2;
+          dcData[b] = buffer.slice(offset, offset + dataSize);
+          ecData[b] = rs.encode(dcData[b]);
+          offset += dataSize;
+          maxDataSize = Math.max(maxDataSize, dataSize);
+        }
+        const data = new Uint8Array(totalCodewords);
+        let index = 0;
+        let i, r;
+        for (i = 0; i < maxDataSize; i++) {
+          for (r = 0; r < ecTotalBlocks; r++) {
+            if (i < dcData[r].length) {
+              data[index++] = dcData[r][i];
+            }
+          }
+        }
+        for (i = 0; i < ecCount; i++) {
+          for (r = 0; r < ecTotalBlocks; r++) {
+            data[index++] = ecData[r][i];
+          }
+        }
+        return data;
+      }
+      function createSymbol(data, version, errorCorrectionLevel, maskPattern) {
+        let segments;
+        if (Array.isArray(data)) {
+          segments = Segments.fromArray(data);
+        } else if (typeof data === "string") {
+          let estimatedVersion = version;
+          if (!estimatedVersion) {
+            const rawSegments = Segments.rawSplit(data);
+            estimatedVersion = Version.getBestVersionForData(rawSegments, errorCorrectionLevel);
+          }
+          segments = Segments.fromString(data, estimatedVersion || 40);
+        } else {
+          throw new Error("Invalid data");
+        }
+        const bestVersion = Version.getBestVersionForData(segments, errorCorrectionLevel);
+        if (!bestVersion) {
+          throw new Error("The amount of data is too big to be stored in a QR Code");
+        }
+        if (!version) {
+          version = bestVersion;
+        } else if (version < bestVersion) {
+          throw new Error(
+            "\nThe chosen QR Code version cannot contain this amount of data.\nMinimum version required to store current data is: " + bestVersion + ".\n"
+          );
+        }
+        const dataBits = createData(version, errorCorrectionLevel, segments);
+        const moduleCount = Utils.getSymbolSize(version);
+        const modules = new BitMatrix(moduleCount);
+        setupFinderPattern(modules, version);
+        setupTimingPattern(modules);
+        setupAlignmentPattern(modules, version);
+        setupFormatInfo(modules, errorCorrectionLevel, 0);
+        if (version >= 7) {
+          setupVersionInfo(modules, version);
+        }
+        setupData(modules, dataBits);
+        if (isNaN(maskPattern)) {
+          maskPattern = MaskPattern.getBestMask(
+            modules,
+            setupFormatInfo.bind(null, modules, errorCorrectionLevel)
+          );
+        }
+        MaskPattern.applyMask(maskPattern, modules);
+        setupFormatInfo(modules, errorCorrectionLevel, maskPattern);
+        return {
+          modules,
+          version,
+          errorCorrectionLevel,
+          maskPattern,
+          segments
+        };
+      }
+      exports.create = function create(data, options) {
+        if (typeof data === "undefined" || data === "") {
+          throw new Error("No input text");
+        }
+        let errorCorrectionLevel = ECLevel.M;
+        let version;
+        let mask;
+        if (typeof options !== "undefined") {
+          errorCorrectionLevel = ECLevel.from(options.errorCorrectionLevel, ECLevel.M);
+          version = Version.from(options.version);
+          mask = MaskPattern.from(options.maskPattern);
+          if (options.toSJISFunc) {
+            Utils.setToSJISFunction(options.toSJISFunc);
+          }
+        }
+        return createSymbol(data, version, errorCorrectionLevel, mask);
+      };
+    }
+  });
+
+  // mobile/wallet.cjs
+  var require_wallet = __commonJS({
+    "mobile/wallet.cjs"(exports, module) {
+      var fs = require_fs();
+      var { secp256k1 } = require_secp256k1();
+      var QR = require_qrcode();
+      var { createPredictionSource } = require_prediction_sim();
+      var { responseCookie } = require_http();
+      var BASE = "https://www.binance.com/bapi/defi/v1/public/wallet-direct";
+      var AUTH = "/agent-wallet/login";
+      var fail = (code) => Object.assign(Error(code), { code });
+      var hex = (bytes) => Array.from(bytes, (x) => x.toString(16).padStart(2, "0")).join("");
+      function trustedUrl(value) {
+        try {
+          const u = new URL(value);
+          return u.protocol === "https:" && !u.username && !u.password && /(^|\.)binance\.com$/i.test(u.hostname);
+        } catch {
+          return false;
+        }
+      }
+      function qrImage(url) {
+        const { modules } = QR.create(url, { errorCorrectionLevel: "M" }), paths = [];
+        for (let y = 0; y < modules.size; y++) for (let x = 0; x < modules.size; x++)
+          if (modules.get(y, x)) paths.push(`M${x + 4} ${y + 4}h1v1h-1z`);
+        const size = modules.size + 8;
+        return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" shape-rendering="crispEdges"><path fill="white" d="M0 0h${size}v${size}H0z"/><path fill="black" d="${paths.join("")}"/></svg>`);
+      }
+      function createMobileWallet({ fetchImpl, now = Date.now, autoStart = true, file = "/mobile/data/agentic-wallet.json" }) {
+        let state = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : { clientId: crypto.randomUUID(), auth: { status: "idle" } };
+        let epoch = 0, timer, polling, signing, disposed = false, checkedAt = 0;
+        const save = () => fs.writeFileSync(file, JSON.stringify(state));
+        const changed = () => globalThis.dispatchEvent?.(new CustomEvent("warrior-mobile-wallet"));
+        const pending = () => state.auth.status === "awaiting_scan";
+        function clear(status2, error) {
+          clearTimeout(timer);
+          state.cookie = "";
+          state.auth = { status: status2, ...error && { error } };
+          checkedAt = 0;
+          save();
+          changed();
+        }
+        function expire() {
+          if (pending() && now() >= Date.parse(state.auth.expireAt)) {
+            epoch++;
+            clear("expired", "BINANCE_AUTH_EXPIRED");
+          }
+        }
+        const publicAuth = () => {
+          expire();
+          const { qrCodeId, phase, ...auth } = state.auth;
+          return { ...auth, ...auth.urlForWeb && { qrImage: qrImage(auth.urlForWeb) } };
+        };
+        async function request(path, method = "GET", body, generation = epoch) {
+          const headers = {
+            "content-type": "application/json",
+            agentClientId: state.clientId,
+            "bnc-uuid": state.clientId,
+            agentClientSystem: "Android",
+            agentClientMac: state.clientId,
+            device_name: "10U Warrior Android",
+            system_version: "Android",
+            system_lang: Intl.DateTimeFormat().resolvedOptions().locale,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            "x-trace-id": hex(crypto.getRandomValues(new Uint8Array(16))),
+            agentClientType: "AGENT_CLI",
+            version_code: "1.10.0",
+            clientVersion: "1.10.0",
+            agentClientVersion: "1.10.0"
+          };
+          if (state.cookie) headers.cookie = "agentSessionId=" + state.cookie;
+          let response;
+          try {
+            response = await fetchImpl(BASE + path, { method, headers, ...body !== void 0 && { body: JSON.stringify(body) }, signal: AbortSignal.timeout(18e3) });
+          } catch {
+            throw fail("BINANCE_NETWORK_UNAVAILABLE");
+          }
+          if (generation !== epoch || disposed) throw fail("BINANCE_AUTH_CANCELED");
+          if (!response.ok) {
+            if ([401, 403].includes(response.status) && state.cookie) {
+              epoch++;
+              clear("expired", "BINANCE_SESSION_EXPIRED");
+            }
+            throw fail("BINANCE_HTTP_" + response.status);
+          }
+          let value;
+          try {
+            value = await response.json();
+          } catch {
+            throw fail("BINANCE_RESPONSE_INVALID");
+          }
+          if (generation !== epoch || disposed) throw fail("BINANCE_AUTH_CANCELED");
+          if (value.code !== "000000") {
+            if (String(value.code) === "100001005") {
+              epoch++;
+              clear("expired", "BINANCE_SESSION_EXPIRED");
+            }
+            if (String(value.code) === "351701") {
+              epoch++;
+              clear("expired", "BINANCE_AUTH_REJECTED");
+            }
+            throw fail(/^\d+$/.test(String(value.code)) ? "BINANCE_API_" + value.code : "BINANCE_RESPONSE_INVALID");
+          }
+          const cookie = responseCookie(response)?.match(/(?:^|[,;]\s*)agentSessionId=([^;,\s]+)/)?.[1];
+          if (cookie) {
+            state.cookie = cookie;
+            save();
+          }
+          return value.data;
+        }
+        function schedule() {
+          clearTimeout(timer);
+          if (autoStart && pending() && !disposed) {
+            timer = setTimeout(() => void poll().catch(() => {
+            }), 2e3);
+            timer?.unref?.();
+          }
+        }
+        async function poll() {
+          expire();
+          if (!pending()) return publicAuth();
+          if (polling) return polling;
+          const generation = epoch;
+          polling = (async () => {
+            try {
+              if (state.auth.phase !== "creating" || !state.cookie) {
+                const result2 = await request(AUTH + "/confirm", "POST", { qrCodeId: state.auth.qrCodeId }, generation);
+                if (result2?.connectionStatus !== "CONNECTED") return publicAuth();
+                state.auth.phase = "creating";
+                save();
+              }
+              const result = await request(AUTH + "/query", "GET", void 0, generation);
+              expire();
+              if (generation !== epoch) return publicAuth();
+              if (result?.connectionStatus === "CONNECTED" && result.walletCreateStatus === "CREATED") {
+                if (!state.cookie) throw fail("BINANCE_SESSION_MISSING");
+                state.auth = { status: "connected" };
+                checkedAt = now();
+                save();
+                changed();
+              } else if (result?.connectionStatus === "UNCONNECTED") clear("expired", "BINANCE_SESSION_EXPIRED");
+              return publicAuth();
+            } finally {
+              polling = null;
+              schedule();
+            }
+          })();
+          return polling;
+        }
+        async function status() {
+          expire();
+          if (state.auth.status !== "connected" || !state.cookie) return "UNCONNECTED";
+          if (now() - checkedAt < 5e3) return "CONNECTED";
+          const result = await request(AUTH + "/query");
+          if (result?.connectionStatus !== "CONNECTED" || result.walletCreateStatus !== "CREATED") {
+            clear("expired", "BINANCE_SESSION_EXPIRED");
+            return "UNCONNECTED";
+          }
+          checkedAt = now();
+          return "CONNECTED";
+        }
+        async function signin() {
+          expire();
+          if (pending()) {
+            schedule();
+            return publicAuth();
+          }
+          if (signing) return signing;
+          const generation = ++epoch;
+          signing = (async () => {
+            if (await status() === "CONNECTED") return publicAuth();
+            if (generation !== epoch || disposed) throw fail("BINANCE_AUTH_CANCELED");
+            clear("idle");
+            const key = crypto.getRandomValues(new Uint8Array(32));
+            const publicKeyHex = hex(secp256k1.getPublicKey(key, true).slice(1));
+            key.fill(0);
+            const result = await request(AUTH, "POST", { isFirstLogin: true, os: "Android", publicKeyHex }, generation);
+            const info = result?.qrInfo, expiry = Number(info?.expireAt);
+            if (!info?.qrCodeId || !trustedUrl(info.qrCodeUrl) || !Number.isFinite(expiry) || expiry <= now()) throw fail("BINANCE_AUTH_INVALID_RESPONSE");
+            state.auth = {
+              status: "awaiting_scan",
+              phase: "confirm",
+              qrCodeId: info.qrCodeId,
+              urlForWeb: info.qrCodeUrl,
+              pairingCode: publicKeyHex.slice(0, 3) + publicKeyHex.slice(-3),
+              expireAt: new Date(Math.min(expiry, now() + 3e5)).toISOString()
+            };
+            save();
+            schedule();
+            changed();
+            return publicAuth();
+          })();
+          try {
+            return await signing;
+          } finally {
+            signing = null;
+          }
+        }
+        async function run(args) {
+          if (args.join(" ") === "wallet status") return { data: { status: await status() } };
+          const commands = {
+            "prediction market search": ["market/search", ["query", "limit"]],
+            "prediction market detail": ["market/detail", ["marketTopicId"]],
+            "prediction market order-book": ["order-book", ["marketId", "tokenId"]]
+          };
+          const command = commands[args.slice(0, 3).join(" ")];
+          if (!command || (args.length - 3) % 2) throw fail("WALLET_READ_FORBIDDEN");
+          const body = {};
+          for (let i = 3; i < args.length; i += 2) {
+            const flag = args[i].slice(2);
+            if (!args[i].startsWith("--") || !command[1].includes(flag) || body[flag] !== void 0 || !args[i + 1]) throw fail("WALLET_READ_INVALID");
+            body[flag] = args[i + 1];
+          }
+          if (await status() !== "CONNECTED") throw fail("BINANCE_NOT_CONNECTED");
+          if (body.limit !== void 0) {
+            body.topK = Number(body.limit);
+            delete body.limit;
+          }
+          for (const key of ["marketId", "marketTopicId"]) if (body[key] !== void 0) {
+            const id = Number(body[key]);
+            if (!Number.isSafeInteger(id) || id <= 0) throw fail("WALLET_READ_INVALID");
+            body[key] = id;
+          }
+          return { data: await request("/prediction/agent/" + command[0], "POST", body) };
+        }
+        async function snapshot() {
+          if (await status() !== "CONNECTED") return { wallet: { provider: "binance", status: "unconnected" }, auth: publicAuth(), balances: [], accountValue: null };
+          const generation = epoch;
+          const [wallets, tokens, settings, limits, session] = await Promise.all([
+            request("/agent-wallet/mpc-wallet/list", "POST"),
+            request("/agent-wallet/mpc-wallet/token/list", "POST"),
+            request("/agent-wallet/settings/query"),
+            request("/agent-wallet/trading-limit/query"),
+            request(AUTH + "/query")
+          ]);
+          if (generation !== epoch || session?.connectionStatus !== "CONNECTED" || session?.walletCreateStatus !== "CREATED") throw fail("BINANCE_SESSION_EXPIRED");
+          const addresses = (wallets || []).flatMap((w) => w.subWalletList || []).flatMap((w) => w.addresses || []);
+          const primaryAddress = addresses.find((a) => String(a.binanceChainId) === "56") || addresses[0];
+          const balances = (tokens?.tokenList || []).map((t) => ({ symbol: t.symbol, balance: t.balance, value: t.value == null ? null : Number(t.value) }));
+          return {
+            wallet: { provider: "binance", status: "connected", primaryAddress },
+            auth: publicAuth(),
+            balances,
+            accountValue: balances.every((t) => Number.isFinite(t.value)) ? balances.reduce((sum, t) => sum + t.value, 0) : null,
+            settings: {
+              predictionEnabled: settings?.predictionEnabled,
+              abnormalTxnHandling: settings?.riskyTxnHandling,
+              predictionQuotaLeft: settings?.predictionDailyLimit == null || limits?.predictionQuotaUsed == null ? null : Number(settings.predictionDailyLimit) - Number(limits.predictionQuotaUsed),
+              sessionExpireTime: session?.sessionExpireTime
+            },
+            txLock: null
+          };
+        }
+        async function call(action) {
+          if (action === "signin") return { auth: await signin() };
+          if (action === "auth") {
+            await poll();
+            return { auth: publicAuth() };
+          }
+          if (action === "snapshot") return snapshot();
+          if (action === "network") {
+            const start = now();
+            await request("/mgmt/agent/networks/active");
+            return { serviceAvailable: true, latencyMs: now() - start };
+          }
+          if (action === "signout") {
+            ++epoch;
+            clearTimeout(timer);
+            try {
+              if (state.cookie) await request(AUTH + "/logout", "POST");
+            } finally {
+              clear("idle");
+            }
+            return { auth: publicAuth() };
+          }
+          throw fail("WALLET_READ_FORBIDDEN");
+        }
+        save();
+        expire();
+        schedule();
+        return {
+          call,
+          run,
+          status,
+          source: createPredictionSource(run),
+          activity: () => {
+            expire();
+            return pending() || Boolean(signing);
+          },
+          dispose() {
+            disposed = true;
+            epoch++;
+            clearTimeout(timer);
+          }
+        };
+      }
+      module.exports = { createMobileWallet, qrImage };
+    }
+  });
+
+  // public/card-lab-draws.js
+  var require_card_lab_draws = __commonJS({
+    "public/card-lab-draws.js"(exports, module) {
+      ((root) => {
+        const CAP = 5, INTERVAL = 10 * 60 * 1e3;
+        const initial = () => ({ remaining: CAP, nextAt: null });
+        function refill(value, now) {
+          if (!value || !Number.isInteger(value.remaining) || value.remaining < 0 || value.remaining > CAP || value.remaining < CAP && (!Number.isFinite(value.nextAt) || value.nextAt <= 0)) return initial();
+          if (value.remaining === CAP) return initial();
+          if (now < value.nextAt) return { ...value };
+          const earned = 1 + Math.floor((now - value.nextAt) / INTERVAL);
+          const remaining = Math.min(CAP, value.remaining + earned);
+          return { remaining, nextAt: remaining === CAP ? null : value.nextAt + earned * INTERVAL };
+        }
+        function spend(value, now) {
+          const budget = refill(value, now);
+          if (!budget.remaining) return null;
+          return { remaining: budget.remaining - 1, nextAt: budget.nextAt ?? now + INTERVAL };
+        }
+        const api = { CAP, INTERVAL, initial, refill, spend };
+        if (typeof module !== "undefined" && module.exports) module.exports = api;
+        else root.CardLabDraws = api;
+      })(globalThis);
+    }
+  });
+
+  // card-collection.cjs
+  var require_card_collection = __commonJS({
+    "card-collection.cjs"(exports, module) {
+      var fs = require_fs();
+      var crypto2 = require_crypto2();
+      var { atomicWriteJson } = require_atomic_json();
+      var D = require_card_lab_data();
+      var Draws = require_card_lab_draws();
+      var fail = (code, status = 409) => {
+        throw Object.assign(Error(code), { code, statusCode: status });
+      };
+      var clone = (value) => structuredClone(value);
+      var integer = (n) => Number.isSafeInteger(n) && n >= 0;
+      var card = (c) => D.validCard(c) && c.id.length > 0 && integer(c.revision ?? 0) && typeof c.createdAt === "string" && Number.isFinite(Date.parse(c.createdAt));
+      function validate(s) {
+        if (!s || s.version !== "COL-1" || !integer(s.revision) || !integer(s.clock) || !Array.isArray(s.cards) || s.cards.length > D.order.length || !s.cards.every(card) || new Set(s.cards.map((c) => c.id)).size !== s.cards.length || new Set(s.cards.map((c) => c.personaId)).size !== s.cards.length) fail("COLLECTION_CORRUPT", 503);
+        if (!s.budget || !integer(s.budget.remaining) || s.budget.remaining > Draws.CAP || (s.budget.remaining === Draws.CAP ? s.budget.nextAt !== null : !integer(s.budget.nextAt) || s.budget.nextAt <= 0)) fail("COLLECTION_CORRUPT", 503);
+        if (s.pending !== null && (!card(s.pending) || s.cards.some((c) => c.id === s.pending.id) || !s.cards.some((c) => c.personaId === s.pending.personaId))) fail("COLLECTION_CORRUPT", 503);
+        if (s.featuredId !== null && !s.cards.some((c) => c.id === s.featuredId) && s.pending?.id !== s.featuredId) fail("COLLECTION_CORRUPT", 503);
+        if (!s.receipts || typeof s.receipts !== "object" || Array.isArray(s.receipts) || Object.entries(s.receipts).some(([id, r]) => !id || !r || typeof r.fingerprint !== "string" || !integer(r.revision) || r.revision > s.revision || typeof r.action !== "string")) fail("COLLECTION_CORRUPT", 503);
+        return s;
+      }
+      function createCardCollection({ file, now = Date.now, randomInt = crypto2.randomInt, uuid = crypto2.randomUUID, write = atomicWriteJson } = {}) {
+        const timestamp = () => {
+          const value = now();
+          if (!integer(value)) fail("COLLECTION_CLOCK_INVALID", 503);
+          return value;
+        };
+        let initialized = false;
+        let memory = { version: "COL-1", revision: 0, clock: timestamp(), cards: [], pending: null, featuredId: null, budget: Draws.initial(), receipts: {} };
+        function load() {
+          if (!file) return clone(memory);
+          try {
+            const s = validate(JSON.parse(fs.readFileSync(file, "utf8")));
+            initialized = true;
+            return s;
+          } catch (e) {
+            if (e.code === "ENOENT" && !initialized) return clone(memory);
+            if (e.code === "COLLECTION_CORRUPT") throw e;
+            fail("COLLECTION_STORAGE_UNAVAILABLE", 503);
+          }
+        }
+        function save(s) {
+          try {
+            if (file) write(file, s);
+            memory = clone(s);
+            initialized = true;
+          } catch {
+            fail("COLLECTION_STORAGE_UNAVAILABLE", 503);
+          }
+        }
+        function current() {
+          const s = load();
+          s.clock = Math.max(s.clock, timestamp());
+          s.budget = Draws.refill(s.budget, s.clock);
+          return s;
+        }
+        function view(s) {
+          return clone({ version: s.version, revision: s.revision, serverTime: s.clock, cards: s.cards, pending: s.pending, featuredId: s.featuredId, budget: s.budget });
+        }
+        function read() {
+          const s = current();
+          save(s);
+          return view(s);
+        }
+        function transact(request) {
+          if (!request || typeof request.requestId !== "string" || !/^[a-zA-Z0-9_-]{8,100}$/.test(request.requestId) || !integer(request.revision) || !["draw", "reroll", "replace", "discard", "migrate"].includes(request.action)) fail("COLLECTION_REQUEST_INVALID", 400);
+          const { action, cardId = null, pendingId = null, cardRevision = null, legacy = null } = request;
+          const fingerprint = JSON.stringify({ action, revision: request.revision, cardId, pendingId, cardRevision, legacy });
+          const s = current(), prior = Object.hasOwn(s.receipts, request.requestId) ? s.receipts[request.requestId] : null;
+          if (prior) {
+            if (prior.fingerprint !== fingerprint) fail("COLLECTION_REQUEST_CONFLICT");
+            save(s);
+            return { ...view(s), operation: clone(prior), replayed: true };
+          }
+          const migrationHash = action === "migrate" ? crypto2.createHash("sha256").update(JSON.stringify(legacy)).digest("hex") : null;
+          if (action === "migrate" && s.migrationHash === migrationHash) return { ...view(s), replayed: true };
+          if (request.revision !== s.revision) fail("COLLECTION_CHANGED");
+          const at = new Date(s.clock).toISOString();
+          let resultId;
+          if (action === "migrate") {
+            if (s.revision !== 0 || s.cards.length || s.pending) fail("COLLECTION_MIGRATION_CONFLICT");
+            if (!legacy || !Array.isArray(legacy.cards)) fail("COLLECTION_MIGRATION_INVALID", 400);
+            const imported = { ...s, cards: clone(legacy.cards), pending: clone(legacy.pending ?? null), featuredId: legacy.featuredId ?? null, budget: clone(legacy.budget) };
+            try {
+              validate(imported);
+            } catch {
+              fail("COLLECTION_MIGRATION_INVALID", 400);
+            }
+            imported.budget = Draws.refill(imported.budget, s.clock);
+            if (imported.budget.nextAt !== null) imported.budget.nextAt = Math.min(imported.budget.nextAt, s.clock + Draws.INTERVAL);
+            Object.assign(s, { cards: imported.cards, pending: imported.pending, featuredId: imported.featuredId, budget: imported.budget, migrationHash });
+            resultId = s.featuredId;
+          } else if (action === "draw" || action === "reroll") {
+            const budget = Draws.spend(s.budget, s.clock);
+            if (!budget) fail("DRAW_COOLDOWN");
+            if (action === "draw") {
+              const persona = D.order[randomInt(D.order.length)], styles = D.personas[persona].styles;
+              const next = { ...D.makeCard(persona, styles[randomInt(styles.length)], randomInt(4294967295), uuid()), createdAt: at, revision: 0 };
+              if (!card(next) || s.cards.some((c) => c.id === next.id) || s.pending?.id === next.id) fail("CARD_GENERATION_FAILED", 503);
+              s.pending = s.cards.some((c) => c.personaId === next.personaId) ? next : null;
+              if (!s.pending) s.cards.unshift(next);
+              s.featuredId = resultId = next.id;
+            } else {
+              const index = s.cards.findIndex((c) => c.id === cardId), original = s.cards[index];
+              if (!original) fail("CARD_NOT_OWNED");
+              if (!integer(cardRevision) || cardRevision !== (original.revision ?? 0)) fail("COLLECTION_CHANGED");
+              const next = D.rerollCard(original, randomInt(4294967295));
+              if (!card(next)) fail("CARD_GENERATION_FAILED", 503);
+              s.cards[index] = next;
+              resultId = next.id;
+            }
+            s.budget = budget;
+          } else {
+            const source = s.pending, target = s.cards.find((c) => c.id === cardId);
+            if (!source || source.id !== pendingId || !target || target.personaId !== source.personaId || !integer(cardRevision) || cardRevision !== (target.revision ?? 0)) fail("COLLECTION_CHANGED");
+            if (action === "replace") s.cards = s.cards.map((c) => c.id === target.id ? { ...source, id: target.id, createdAt: target.createdAt, revision: (target.revision ?? 0) + 1 } : c);
+            s.pending = null;
+            s.featuredId = resultId = target.id;
+          }
+          s.revision++;
+          const receipt = { fingerprint, action, revision: s.revision, cardId: resultId, at: s.clock };
+          Object.defineProperty(s.receipts, request.requestId, { value: receipt, enumerable: true, writable: true, configurable: true });
+          validate(s);
+          save(s);
+          return { ...view(s), operation: clone(receipt), replayed: false };
+        }
+        function assertSelection(config) {
+          if (config.collectionRevision === void 0) return;
+          const s = load();
+          if (!integer(config.collectionRevision) || config.collectionRevision !== s.revision) fail("COLLECTION_CHANGED");
+          if (!Array.isArray(config.agents) || !config.agents.length) fail("CARD_NOT_OWNED");
+          const identity = (c) => JSON.stringify([c.id, c.personaId, c.styleId, c.version, c.seed, c.attributeSeed ?? null, c.stats, c.revision ?? 0]);
+          for (const agent of config.agents) {
+            const owned = s.cards.find((c) => c.id === agent.sourceAgentId);
+            if (!owned || !card(agent.cardSnapshot) || identity(owned) !== identity(agent.cardSnapshot)) fail("CARD_NOT_OWNED");
+          }
+        }
+        load();
+        return { read, transact, assertSelection };
+      }
+      module.exports = { createCardCollection };
+    }
+  });
+
   // public/strategy-widget.js
   var require_strategy_widget = __commonJS({
     "public/strategy-widget.js"(exports, module) {
       ((root) => {
+        const values = typeof module === "object" && module.exports ? require_market_values() : root.Warrior.marketValues;
         const statuses = {
           running: "\u8FD0\u884C\u4E2D",
           paused: "\u5DF2\u6682\u505C",
@@ -5423,6 +11025,9 @@ Return exactly one JSON object`);
           const rows = battles.filter((b) => !b.placeholder).flatMap((b) => (b.agents || []).map((a) => {
             const orders = (a.orders || []).filter((o) => o.status === "OPEN");
             const current = orders.filter((o) => o.start <= now && o.end > now);
+            const pendingBets = values.pendingBets(a.orders, now);
+            const snapshots = new Map((b.auditTrail || []).filter((e) => e.type === "MARKET_SNAPSHOT").map((e) => [e.id, e]));
+            const reference = values.betReferencePrice(current.at(-1), snapshots);
             const direction = [...new Set(current.map((o) => o.direction))].map((d) => t2(d === "UP" ? "\u770B\u6DA8" : d === "DOWN" ? "\u770B\u7A7A" : "\u89C2\u671B")).join(" / ");
             const profit = a.equity - b.config.initialBalance - (a.addedCapital || 0);
             const state = network === "error" ? "\u884C\u60C5\u8FDE\u63A5\u4E2D\u65AD" : b.error || b.aiConnectionFailure ? "\u7B49\u5F85\u6062\u590D" : statuses[b.status] || "\u7B49\u5F85\u66F4\u65B0";
@@ -5433,6 +11038,8 @@ Return exactly one JSON object`);
               battleName: b.name,
               icon: icon(a.policy || {}),
               coin: a.policy?.coin || "",
+              updatedLabel: t2("\u66F4\u65B0\u4E8E"),
+              preparation: a.preparation?.status === "calculating" ? t2("\u4E0B\u4E00\u8F6E\u63D0\u524D\u8BA1\u7B97\u4E2D") : a.preparation?.status === "ready" ? t2("\u4E0B\u4E00\u8F6E\u7B56\u7565\u5DF2\u5C31\u7EEA") : a.preparation?.status === "failed" ? t2("\u63D0\u524D\u8BA1\u7B97\u672A\u5B8C\u6210\uFF0C\u5F00\u5C40\u91CD\u8BD5") : "",
               funds: `${t2("\u6A21\u62DF\u8D44\u91D1")}  ${amount(a.equity)} U`,
               profit: `${t2("\u5DF2\u7ED3\u7B97\u6536\u76CA")}  ${profit > 0 ? "+" : ""}${amount(profit)} U`,
               fundsLabel: t2("\u6A21\u62DF\u8D44\u91D1"),
@@ -5440,6 +11047,19 @@ Return exactly one JSON object`);
               profitLabel: t2("\u5DF2\u7ED3\u7B97\u6536\u76CA"),
               profitValue: `${profit > 0 ? "+" : ""}${amount(profit)} U`,
               roundLabel: t2("\u672C\u8F6E\u4E0B\u6CE8"),
+              cashLabel: t2("\u53EF\u7528"),
+              cashValue: `${amount(a.cash)} U`,
+              reservedLabel: t2("\u51BB\u7ED3"),
+              reservedValue: `${amount(a.reserved)} U`,
+              betValue: current.length ? `${amount(pendingBets.currentAmount)} U` : "\u2014",
+              previousLabel: t2("\u5F80\u671F\u5F85\u7ED3\u7B97"),
+              previousValue: pendingBets.previous.length ? `${amount(pendingBets.previousAmount)} U` : "",
+              referenceLabel: t2("\u4E0B\u6CE8\u53C2\u8003\u4EF7"),
+              referenceValue: reference == null ? "" : `${amount(reference)} USDT`,
+              winLabel: t2("\u80DC\u7387"),
+              winValue: a.winRate == null ? "\u2014" : `${amount(a.winRate * 100)}%`,
+              winRecord: Number.isFinite(a.wins) && Number.isFinite(a.losses) ? `${a.wins}/${a.wins + a.losses}` : "\u2014",
+              detailLabel: t2("\u67E5\u770B\u8BE6\u60C5"),
               positive: Number.isFinite(profit) && profit >= 0,
               action: direction || t2(orders.length ? "\u7B49\u5F85\u7ED3\u7B97" : "\u89C2\u671B"),
               status: t2(state),
@@ -5462,6 +11082,8 @@ Return exactly one JSON object`);
           module.exports = { project };
           return;
         }
+        root.WarriorWidgetProject = project;
+        if (root.document.documentElement.dataset.cardLab === "true") return;
         if (!root.Capacitor?.isNativePlatform?.()) return;
         const api = root.Warrior?.simulationApi;
         const plugin = root.Capacitor.Plugins?.StrategyWidget || root.Capacitor.registerPlugin?.("StrategyWidget");
@@ -5486,7 +11108,7 @@ Return exactly one JSON object`);
             const signature = JSON.stringify(payload);
             if (signature !== lastSignature || Date.now() - lastSent >= 25e3) {
               if (api.serviceOwned) {
-                const words = ["\u6A21\u62DF\u8D44\u91D1", "\u5DF2\u7ED3\u7B97\u6536\u76CA", "\u672C\u8F6E\u4E0B\u6CE8", "\u770B\u6DA8", "\u770B\u7A7A", "\u89C2\u671B", "\u7B49\u5F85\u7ED3\u7B97", "\u884C\u60C5\u8FDE\u63A5\u4E2D\u65AD", "\u7B49\u5F85\u6062\u590D", ...Object.values(statuses)];
+                const words = ["\u66F4\u65B0\u4E8E", "\u4E0B\u4E00\u8F6E\u63D0\u524D\u8BA1\u7B97\u4E2D", "\u4E0B\u4E00\u8F6E\u7B56\u7565\u5DF2\u5C31\u7EEA", "\u63D0\u524D\u8BA1\u7B97\u672A\u5B8C\u6210\uFF0C\u5F00\u5C40\u91CD\u8BD5", "\u6A21\u62DF\u8D44\u91D1", "\u5DF2\u7ED3\u7B97\u6536\u76CA", "\u672C\u8F6E\u4E0B\u6CE8", "\u53EF\u7528", "\u51BB\u7ED3", "\u5F80\u671F\u5F85\u7ED3\u7B97", "\u4E0B\u6CE8\u53C2\u8003\u4EF7", "\u80DC\u7387", "\u67E5\u770B\u8BE6\u60C5", "\u770B\u6DA8", "\u770B\u7A7A", "\u89C2\u671B", "\u7B49\u5F85\u7ED3\u7B97", "\u884C\u60C5\u8FDE\u63A5\u4E2D\u65AD", "\u7B49\u5F85\u6062\u590D", ...Object.values(statuses)];
                 await api.configureWidget({
                   labels: payload.labels,
                   words: Object.fromEntries(words.map((word) => [word, t(word)])),
@@ -5615,6 +11237,8 @@ Return exactly one JSON object`);
       var { normalizePolicy, buildDecisionContext, validateDecision, decisionAudit } = require_ai_decision();
       var catalog = require_strategy_catalog();
       var { nativeFetch } = require_http();
+      var { createMobileWallet } = require_wallet();
+      var { createCardCollection } = require_card_collection();
       var fail = (code) => Object.assign(new Error(code), { code });
       function createMobileRuntime({ fetchImpl = nativeFetch, now = Date.now, autoStart = true } = {}) {
         if (!globalThis.WarriorStorageNative?.call) throw fail("MOBILE_STORAGE_UNAVAILABLE");
@@ -5645,16 +11269,14 @@ Return exactly one JSON object`);
             return sealed.value;
           }
         } });
+        const collection = createCardCollection({ file: "/mobile/data/card-collection.json", now });
+        const wallet = createMobileWallet({ fetchImpl, now, autoStart });
         const source = createSimulationMarketSource({
           fetchImpl: marketFetch,
           now,
-          walletStatus: async () => "UNCONNECTED",
-          official: { detail: async () => {
-            throw fail("MOBILE_PAPER_ONLY");
-          } },
-          run: async () => {
-            throw fail("MOBILE_PAPER_ONLY");
-          }
+          walletStatus: wallet.status,
+          official: wallet.source,
+          run: wallet.run
         });
         const indicators = createBinanceIndicatorSource({ fetchImpl: marketFetch, now });
         const prices = createPaperTrading({ fetchImpl: marketFetch, now });
@@ -5742,7 +11364,15 @@ Return exactly one JSON object`);
               if (target.protocol !== "https:") throw fail("MOBILE_HTTPS_REQUIRED");
             }
             let data;
-            if (url === "/api/ai/settings" && !mutation) data = ai.snapshot();
+            if (url === "/api/config" && !mutation) data = { provider: "binance", chainId: "56", tradingEnabled: false };
+            else if (url === "/api/network" && !mutation) data = await wallet.call("network");
+            else if (url === "/api/wallet" && !mutation) data = await wallet.call("snapshot");
+            else if (url === "/api/wallet/signin" && mutation) data = await wallet.call("signin");
+            else if (url === "/api/wallet/auth" && !mutation) data = await wallet.call("auth");
+            else if (url === "/api/wallet/signout" && mutation) data = await wallet.call("signout");
+            else if (url === "/api/cards/collection" && !mutation) data = collection.read();
+            else if (url === "/api/cards/action" && mutation) data = collection.transact(body);
+            else if (url === "/api/ai/settings" && !mutation) data = ai.snapshot();
             else if (url === "/api/ai/connections" && mutation) data = await ai.save(body);
             else if (url === "/api/ai/connections/test" && mutation) data = await ai.save(body, true);
             else if (url === "/api/ai/connections/check" && mutation) data = await ai.testConnection(body.provider, body.revision);
@@ -5758,7 +11388,7 @@ Return exactly one JSON object`);
         const api = {
           mode: "native",
           keepInBackground: true,
-          walletSupported: false,
+          walletSupported: true,
           clientId: "android-local",
           list: async () => {
             const battles = simulation.summaries();
@@ -5770,6 +11400,7 @@ Return exactly one JSON object`);
           async create(name, config = {}, requestId) {
             const prior = simulation.findCreation(requestId, name, config);
             if (prior) return prior;
+            collection.assertSelection(config);
             ai.assertAgents(config.agents);
             return simulation.create(name, config, null, requestId);
           },
@@ -5785,6 +11416,7 @@ Return exactly one JSON object`);
             return simulation.setEnabled(enabled, id);
           },
           topUp: async (id, agentId, amount, requestId) => simulation.topUp(id, agentId, amount, requestId),
+          setGlobalControls: async (id, controls, revision) => simulation.setGlobalControls(controls, id, revision),
           setEmotion: async (id, value) => simulation.setEmotion(value, id),
           setActionUrge: async (id, value) => simulation.setActionUrge(value, id),
           setRealtimeEntry: async (id, value) => simulation.setRealtimeEntry(value, id),
@@ -5801,6 +11433,7 @@ Return exactly one JSON object`);
           valuation: async (id) => ({ ...await valuation(simulation.snapshot(id)), recovery: simulation.snapshot(id).recovery || null }),
           executions: async () => ({ executions: [], quotesEnabled: false, tradingEnabled: false }),
           networkStatus: () => ({ ...network }),
+          walletActivity: () => wallet.activity(),
           checkNetwork: async () => ({ mode: "paper", prices: [await prices.price("BTCUSDT", { force: true })] }),
           tick: () => simulation.tick()
         };
@@ -5815,6 +11448,7 @@ Return exactly one JSON object`);
           globalThis.document?.addEventListener("visibilitychange", advance);
         }
         api.dispose = () => {
+          wallet.dispose();
           clearInterval(timer);
           globalThis.removeEventListener?.("pageshow", advance);
           globalThis.removeEventListener?.("online", advance);
@@ -5831,5 +11465,14 @@ Return exactly one JSON object`);
 /*! Bundled license information:
 
 @noble/hashes/utils.js:
+@noble/hashes/utils.js:
   (*! noble-hashes - MIT License (c) 2022 Paul Miller (paulmillr.com) *)
+
+@noble/curves/abstract/utils.js:
+@noble/curves/abstract/modular.js:
+@noble/curves/abstract/curve.js:
+@noble/curves/abstract/weierstrass.js:
+@noble/curves/_shortw_utils.js:
+@noble/curves/secp256k1.js:
+  (*! noble-curves - MIT License (c) 2022 Paul Miller (paulmillr.com) *)
 */

@@ -33,11 +33,11 @@ public final class SimulationService extends Service {
     private final ExecutorService network = Executors.newFixedThreadPool(8);
     private WebView engine;
     private PowerManager.WakeLock wakeLock;
-    private boolean ready, foreground, destroyed, pauseRequested, idleScheduled;
+    private boolean ready, foreground, destroyed, pauseRequested, idleScheduled, walletPending;
     private String failure;
     private int sequence, active, unsettled;
     private long lastHeartbeat;
-    private final Runnable idle = () -> { idleScheduled = false; if (active == 0 && unsettled == 0) demote(); };
+    private final Runnable idle = () -> { idleScheduled = false; if (active == 0 && unsettled == 0 && !walletPending) demote(); };
 
     @Override public void onCreate() {
         super.onCreate();
@@ -97,7 +97,7 @@ public final class SimulationService extends Service {
         PendingIntent pause = PendingIntent.getService(this, 1, new Intent(this, SimulationService.class).setAction(PAUSE), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         return new NotificationCompat.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_simulation_notification)
             .setContentTitle(getString(R.string.simulation_title))
-            .setContentText(getString(active > 0 ? R.string.simulation_running : R.string.simulation_settling))
+            .setContentText(getString(active > 0 ? R.string.simulation_running : walletPending ? R.string.wallet_authorizing : R.string.simulation_settling))
             .setContentIntent(content).setOngoing(true).setOnlyAlertOnce(true)
             .addAction(0, getString(R.string.simulation_pause), pause).build();
     }
@@ -124,6 +124,7 @@ public final class SimulationService extends Service {
     JSObject status() {
         JSObject result = new JSObject(); result.put("ready", ready); result.put("foreground", foreground);
         result.put("activeBattles", active); result.put("unsettledAgents", unsettled); result.put("lastHeartbeat", lastHeartbeat);
+        result.put("walletPending", walletPending);
         result.put("error", failure == null ? JSONObject.NULL : failure);
         result.put("notificationsEnabled", androidx.core.app.NotificationManagerCompat.from(this).areNotificationsEnabled()); return result;
     }
@@ -178,11 +179,11 @@ public final class SimulationService extends Service {
             if (!Arrays.asList("simulation", "network", "price").contains(name)) return;
             handler.post(() -> { try { emit(name, new JSObject(raw)); } catch (JSONException ignored) {} });
         }
-        @JavascriptInterface public void demand(int count, int pending) {
+        @JavascriptInterface public void demand(int count, int pending, boolean authorizing) {
             handler.post(() -> {
                 if (destroyed || failure != null) return;
-                boolean changed = active != count || unsettled != pending; active = count; unsettled = pending;
-                if (active > 0 || unsettled > 0) {
+                boolean changed = active != count || unsettled != pending || walletPending != authorizing; active = count; unsettled = pending; walletPending = authorizing;
+                if (active > 0 || unsettled > 0 || walletPending) {
                     try { promote(); if (changed) getSystemService(NotificationManager.class).notify(NOTIFICATION, notification()); }
                     catch (RuntimeException e) { fail("MOBILE_BACKGROUND_START_DENIED"); }
                 } else if (!idleScheduled) { idleScheduled = true; handler.postDelayed(idle, 2000); }
@@ -235,7 +236,12 @@ public final class SimulationService extends Service {
                     }
                     String body = bytes.toString("UTF-8"); Object data;
                     try { data = body.isEmpty() ? JSONObject.NULL : new JSONTokener(body).nextValue(); } catch (JSONException invalid) { data = body; }
-                    JSONObject value = new JSONObject(); value.put("status", status); value.put("data", data);
+                    JSONObject responseHeaders = new JSONObject();
+                    for (java.util.Map.Entry<String, java.util.List<String>> header : connection.getHeaderFields().entrySet()) {
+                        if (header.getKey() != null) responseHeaders.put(header.getKey().toLowerCase(java.util.Locale.ROOT), String.join(", ", header.getValue()));
+                    }
+                    // Delivered only to the private runtime WebView, never to UI events.
+                    JSONObject value = new JSONObject(); value.put("status", status); value.put("data", data); value.put("headers", responseHeaders);
                     result.put("ok", true); result.put("value", value);
                 } catch (Exception e) {
                     try { result.put("ok", false); result.put("code", "MOBILE_NETWORK_UNAVAILABLE"); } catch (JSONException ignored) {}

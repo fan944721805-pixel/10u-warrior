@@ -7,6 +7,8 @@ const { createAiConnections } = require('../ai-connections');
 const { normalizePolicy, buildDecisionContext, validateDecision, decisionAudit } = require('../ai-decision');
 const catalog = require('../public/strategy-catalog');
 const { nativeFetch } = require('./http.cjs');
+const { createMobileWallet } = require('./wallet.cjs');
+const { createCardCollection } = require('../card-collection.cjs');
 const fail = code => Object.assign(new Error(code), { code });
 
 function createMobileRuntime({ fetchImpl = nativeFetch, now = Date.now, autoStart = true } = {}) {
@@ -27,8 +29,10 @@ function createMobileRuntime({ fetchImpl = nativeFetch, now = Date.now, autoStar
     seal: value => ({ nativeVault: 1, value }),
     unseal: sealed => { if (sealed?.nativeVault !== 1 || typeof sealed.value !== 'string') throw fail('AI_VAULT_UNAVAILABLE'); return sealed.value; },
   } });
-  const source = createSimulationMarketSource({ fetchImpl: marketFetch, now, walletStatus: async () => 'UNCONNECTED',
-    official: { detail: async () => { throw fail('MOBILE_PAPER_ONLY'); } }, run: async () => { throw fail('MOBILE_PAPER_ONLY'); } });
+  const collection=createCardCollection({file:'/mobile/data/card-collection.json',now});
+  const wallet=createMobileWallet({fetchImpl,now,autoStart});
+  const source = createSimulationMarketSource({ fetchImpl: marketFetch, now, walletStatus: wallet.status,
+    official:wallet.source, run:wallet.run });
   const indicators = createBinanceIndicatorSource({ fetchImpl: marketFetch, now });
   const prices = createPaperTrading({ fetchImpl: marketFetch, now });
   const simulation = createSimulationBattles({ source, indicatorSource: indicators, decisionProvider: ai.router,
@@ -68,7 +72,15 @@ function createMobileRuntime({ fetchImpl = nativeFetch, now = Date.now, autoStar
         if (target.protocol !== 'https:') throw fail('MOBILE_HTTPS_REQUIRED');
       }
       let data;
-      if (url === '/api/ai/settings' && !mutation) data = ai.snapshot();
+      if(url==='/api/config' && !mutation)data={provider:'binance',chainId:'56',tradingEnabled:false};
+      else if(url==='/api/network' && !mutation)data=await wallet.call('network');
+      else if(url==='/api/wallet' && !mutation)data=await wallet.call('snapshot');
+      else if(url==='/api/wallet/signin' && mutation)data=await wallet.call('signin');
+      else if(url==='/api/wallet/auth' && !mutation)data=await wallet.call('auth');
+      else if(url==='/api/wallet/signout' && mutation)data=await wallet.call('signout');
+      else if(url==='/api/cards/collection' && !mutation)data=collection.read();
+      else if(url==='/api/cards/action' && mutation)data=collection.transact(body);
+      else if (url === '/api/ai/settings' && !mutation) data = ai.snapshot();
       else if (url === '/api/ai/connections' && mutation) data = await ai.save(body);
       else if (url === '/api/ai/connections/test' && mutation) data = await ai.save(body, true);
       else if (url === '/api/ai/connections/check' && mutation) data = await ai.testConnection(body.provider, body.revision);
@@ -80,7 +92,7 @@ function createMobileRuntime({ fetchImpl = nativeFetch, now = Date.now, autoStar
     } catch (error) { return Response.json({ code: error.code || 'MOBILE_SERVICE_FAILED', error: error.code || 'MOBILE_SERVICE_FAILED' }, { status: error.statusCode || 503 }); }
   }
   const api = {
-    mode: 'native', keepInBackground: true, walletSupported: false, clientId: 'android-local',
+    mode: 'native', keepInBackground: true, walletSupported: true, clientId: 'android-local',
     list: async () => { const battles = simulation.summaries(); return { battles, leaderboard: simulation.leaderboard(battles) }; },
     snapshot: async id => simulation.liveSnapshot(id || 'default'),
     report: async id => simulation.snapshot(id || 'default'),
@@ -88,6 +100,7 @@ function createMobileRuntime({ fetchImpl = nativeFetch, now = Date.now, autoStar
     async create(name, config = {}, requestId) {
       const prior = simulation.findCreation(requestId, name, config);
       if (prior) return prior;
+      collection.assertSelection(config);
       ai.assertAgents(config.agents);
       return simulation.create(name, config, null, requestId);
     },
@@ -103,6 +116,7 @@ function createMobileRuntime({ fetchImpl = nativeFetch, now = Date.now, autoStar
       return simulation.setEnabled(enabled, id);
     },
     topUp: async (id, agentId, amount, requestId) => simulation.topUp(id, agentId, amount, requestId),
+    setGlobalControls: async (id,controls,revision) => simulation.setGlobalControls(controls,id,revision),
     setEmotion: async (id, value) => simulation.setEmotion(value, id),
     setActionUrge: async (id, value) => simulation.setActionUrge(value, id),
     setRealtimeEntry: async (id, value) => simulation.setRealtimeEntry(value, id),
@@ -115,6 +129,7 @@ function createMobileRuntime({ fetchImpl = nativeFetch, now = Date.now, autoStar
     valuation: async id => ({ ...await valuation(simulation.snapshot(id)), recovery: simulation.snapshot(id).recovery || null }),
     executions: async () => ({ executions: [], quotesEnabled: false, tradingEnabled: false }),
     networkStatus: () => ({ ...network }),
+    walletActivity: () => wallet.activity(),
     checkNetwork: async () => ({ mode: 'paper', prices: [await prices.price('BTCUSDT', { force: true })] }),
     tick: () => simulation.tick(),
   };
@@ -126,7 +141,7 @@ function createMobileRuntime({ fetchImpl = nativeFetch, now = Date.now, autoStar
     globalThis.addEventListener('online', advance);
     globalThis.document?.addEventListener('visibilitychange', advance);
   }
-  api.dispose = () => { clearInterval(timer); globalThis.removeEventListener?.('pageshow', advance); globalThis.removeEventListener?.('online', advance); globalThis.document?.removeEventListener('visibilitychange', advance); };
+  api.dispose = () => { wallet.dispose(); clearInterval(timer); globalThis.removeEventListener?.('pageshow', advance); globalThis.removeEventListener?.('online', advance); globalThis.document?.removeEventListener('visibilitychange', advance); };
   return { api, request };
 }
 globalThis.WarriorMobileRuntime = { create: createMobileRuntime };

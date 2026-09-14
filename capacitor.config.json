@@ -1,7 +1,7 @@
 {
   "appId": "com.tenuwarrior.app",
   "appName": "10U 战神",
-  "webDir": "public",
+  "webDir": "artifacts/mobile-web",
   "loggingBehavior": "none",
   "server": {
     "androidScheme": "https"

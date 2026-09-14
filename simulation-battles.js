@@ -1,3 +1,4 @@
+const globalControl = require('./global-controls.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
@@ -56,7 +57,7 @@ function normalizeBattleConfig(value = {}, currentPolicies = normalizeAgentPolic
     if (!id || seen.has(id)) id = `agent-${index + 1}`;
     while (seen.has(id)) id = `${id}-${index + 1}`;
     seen.add(id);
-    const normalized = normalizePolicy({ ...agent, id }, id);
+    const normalized = normalizePolicy({ ...agent, ...(agent.cardSnapshot&&value.capitalLimits&&!agent.capitalLimits?{capitalLimits:value.capitalLimits}:{}), id }, id);
     if(!supportsAsset(normalized.strategy,normalized.coin))throw Object.assign(new Error('CHARACTER_ASSET_UNSUPPORTED'),{code:'CHARACTER_ASSET_UNSUPPORTED',statusCode:400});
     return {
       ...normalized,
@@ -85,8 +86,9 @@ function normalizeBattleConfig(value = {}, currentPolicies = normalizeAgentPolic
     asset: `${agents[0].coin}USDT`,
     period,
     roundMs: PERIODS[period],
-    emotionLevel,
-    actionUrgeLevel,
+    emotionLevel:globalControl.fromConfig(value).tilt,
+    actionUrgeLevel:globalControl.fromConfig(value).urge,
+    globalControls:globalControl.fromConfig(value),
     realtimeEntry,
     agents,
   };
@@ -137,7 +139,8 @@ function createSimulationBattles({ source, indicatorSource, decisionProvider, fi
     policies = normalizeAgentPolicies(saved.agents);
   }
 
-  let records = [{ id: 'default', name: 'A / B / C', createdAt: null, config: normalizeBattleConfig({}, policies) }];
+  const hasLegacyLedger = Boolean(file && fs.existsSync(file));
+  let records = [{ id: 'default', name: hasLegacyLedger ? 'A / B / C' : '', placeholder: !hasLegacyLedger, createdAt: null, config: normalizeBattleConfig({}, policies) }];
   let creationRequests = {};
   if (registryFile && fs.existsSync(registryFile)) {
     const data = JSON.parse(fs.readFileSync(registryFile, 'utf8'));
@@ -172,8 +175,8 @@ function createSimulationBattles({ source, indicatorSource, decisionProvider, fi
       decide: (input, options) => sharedDecisionProvider.decide(input, { ...options, battleId: record.id }) };
     return createPredictionSimulation({ source: shared, indicatorSource, decisionProvider:battleProvider,
       policyFor: id => policyMap.get(id), agentPolicies: config.agents,
-      initialBalance: config.initialBalance, maxRounds: config.rounds, asset: config.asset, period: config.period, emotionLevel: config.emotionLevel, actionUrgeLevel: config.actionUrgeLevel, realtimeEntry: config.realtimeEntry,
-      file: ledgerFile(record.id), now, leaseEnabled, pauseOnRestore, pauseOnError, enabled: record.id !== 'default' || (!leaseEnabled && !pauseOnRestore),
+      initialBalance: config.initialBalance, maxRounds: config.rounds, asset: config.asset, period: config.period, emotionLevel: config.emotionLevel, actionUrgeLevel: config.actionUrgeLevel, globalControls:config.globalControls, realtimeEntry: config.realtimeEntry,
+      file: record.placeholder && !(file && fs.existsSync(ledgerFile(record.id))) ? undefined : ledgerFile(record.id), now, leaseEnabled, pauseOnRestore, pauseOnError, enabled: !record.placeholder && (record.id !== 'default' || (!leaseEnabled && !pauseOnRestore)),
       onChange: change => emitChange({ battleId: record.id, ...change }) });
   };
   const simulations = new Map(records.map(record => [record.id, makeSimulation(record)]));
@@ -188,15 +191,15 @@ function createSimulationBattles({ source, indicatorSource, decisionProvider, fi
   }
   function snapshot(id = 'default') {
     const record = records.find(battle => battle.id === id);
-    return { ...get(id).snapshot(), id: record.id, name: record.name, createdAt: record.createdAt, placeholder: Boolean(record.placeholder) };
+    return { ...get(id).snapshot(), id: record.id, name: record.name, ...(record.automaticSequence?{automaticSequence:record.automaticSequence}:{}), createdAt: record.createdAt, placeholder: Boolean(record.placeholder) };
   }
   function liveSnapshot(id = 'default') {
     const record = records.find(battle => battle.id === id);
-    return { ...get(id).liveSnapshot(), id: record.id, name: record.name, createdAt: record.createdAt, placeholder: Boolean(record.placeholder), view: 'live' };
+    return { ...get(id).liveSnapshot(), id: record.id, name: record.name, ...(record.automaticSequence?{automaticSequence:record.automaticSequence}:{}), createdAt: record.createdAt, placeholder: Boolean(record.placeholder), view: 'live' };
   }
   function summary(id = 'default') {
     const record = records.find(battle => battle.id === id);
-    return { ...get(id).summary(), id: record.id, name: record.name, createdAt: record.createdAt, placeholder: Boolean(record.placeholder), view: 'summary' };
+    return { ...get(id).summary(), id: record.id, name: record.name, ...(record.automaticSequence?{automaticSequence:record.automaticSequence}:{}), createdAt: record.createdAt, placeholder: Boolean(record.placeholder), view: 'summary' };
   }
   function list() { return records.map(record => snapshot(record.id)); }
   function summaries() { return records.map(record => summary(record.id)); }
@@ -213,7 +216,11 @@ function createSimulationBattles({ source, indicatorSource, decisionProvider, fi
     if (prior) return prior;
     if (typeof (config.initialBalance ?? config.budget) === 'number' && (config.initialBalance ?? config.budget) < 10) throw Object.assign(new Error('INVALID_BATTLE_BUDGET'), { code: 'INVALID_BATTLE_BUDGET', statusCode: 400 });
     if (typeof name !== 'string' || !name.trim() || name.trim().length > 40) throw Object.assign(new Error('Name must contain 1–40 characters'), { statusCode: 400 });
-    const record = { id: crypto.randomUUID(), name: name.trim(), createdAt: now(), config: normalizeBattleConfig(config, policies), ownerClientId: clientId || null };
+    const automaticSequence=config.automaticName===true?Math.max(0,...records.filter(r=>!r.placeholder).map((r,i)=>r.automaticSequence||i+1))+1:null;
+    const frozenConfig=normalizeBattleConfig(config,policies);
+    if(frozenConfig.agents.some(a=>a.cardSnapshot&&a.capitalVersion!=='SC-2'))throw Object.assign(Error('CARD_CAPITAL_VERSION_RETIRED'),{code:'CARD_CAPITAL_VERSION_RETIRED',statusCode:422});
+    if(frozenConfig.agents.some(a=>a.cardSnapshot&&a.traitsVersion!=='CT-1'))throw Object.assign(Error('CARD_TRAITS_VERSION_RETIRED'),{code:'CARD_TRAITS_VERSION_RETIRED',statusCode:422});
+    const record = { id: crypto.randomUUID(), name: name.trim(), createdAt: now(), ...(automaticSequence?{automaticSequence}:{}), config: frozenConfig, ownerClientId: clientId || null };
     if (record.config.initialBalance < 10) throw Object.assign(new Error('INVALID_BATTLE_BUDGET'), { code: 'INVALID_BATTLE_BUDGET', statusCode: 400 });
     const sim = makeSimulation(record);
     sim.setEnabled(true);
@@ -253,6 +260,12 @@ function createSimulationBattles({ source, indicatorSource, decisionProvider, fi
     get(id).topUp(agentId,amount,requestId);return snapshot(id);
   }
   function setEnabled(value, id = 'default') { assertReady(); if (value && records.find(r => r.id === id)?.placeholder) throw Object.assign(new Error('CREATE_BATTLE_FIRST'), { statusCode: 409 }); get(id).setEnabled(value); if (value) { outage = null; observations.clear(); } return snapshot(id); }
+  function setGlobalControls(value,id,revision) {
+    assertReady();
+    if(typeof id!=='string'||!id)throw Object.assign(Error('BATTLE_NOT_FOUND'),{code:'BATTLE_NOT_FOUND',statusCode:404});
+    if(records.find(item=>item.id===id)?.placeholder)throw Object.assign(Error('CREATE_BATTLE_FIRST'),{code:'CREATE_BATTLE_FIRST',statusCode:409});
+    get(id).setGlobalControls(value,revision);return snapshot(id);
+  }
   function setEmotion(value, id = 'default') {
     assertReady();
     if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 100) throw Object.assign(new Error('INVALID_BATTLE_EMOTION'), { statusCode: 400, code: 'INVALID_BATTLE_EMOTION' });
@@ -352,7 +365,7 @@ function createSimulationBattles({ source, indicatorSource, decisionProvider, fi
       throw error;
     } finally { resetting = false; }
   }
-  return { snapshot, liveSnapshot, summary, list, summaries, create, findCreation, leaderboard, getStrategies, setStrategies, touch, topUp, setEnabled, setEmotion, setActionUrge, setRealtimeEntry, end,
+  return { snapshot, liveSnapshot, summary, list, summaries, create, findCreation, leaderboard, getStrategies, setStrategies, touch, topUp, setEnabled, setGlobalControls, setEmotion, setActionUrge, setRealtimeEntry, end,
     marketFailure(id, code) { assertReady(); get(id).marketFailure(code); },
     retryConnection(id = 'default') { assertReady(); get(id).retryConnection(); return snapshot(id); },
     reset, remove,
@@ -361,7 +374,7 @@ function createSimulationBattles({ source, indicatorSource, decisionProvider, fi
       if (resetting) return;
       const started = [];
       for (const [id, sim] of simulations) {
-        if (activeTicks.has(id)) continue;
+        if (activeTicks.has(id) || records.find(record => record.id === id)?.placeholder) continue;
         const task = Promise.resolve().then(() => sim.tick()).finally(() => activeTicks.delete(id));
         activeTicks.set(id, task); started.push(task);
       }
