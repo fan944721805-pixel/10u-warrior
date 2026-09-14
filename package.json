@@ -1,6 +1,6 @@
 {
   "name": "10u-warrior",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "license": "MIT",
   "engines": {
@@ -11,7 +11,7 @@
     "start": "node server.js",
     "dev": "node server.js",
     "check": "node scripts/check.cjs",
-    "test": "node --test",
+    "test": "node scripts/test.cjs",
     "android:sync": "npm run mobile:build && node scripts/sync-android-icon.cjs && npx cap sync android",
     "android:open": "npx cap open android",
     "android:apk": "npm run check && npm test && node scripts/sync-android-icon.cjs && npx cap sync android && cd android && gradlew.bat assembleDebug",

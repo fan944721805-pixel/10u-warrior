@@ -5183,7 +5183,7 @@ Return exactly one JSON object`);
           if (!pending.has(key)) pending.set(key, Promise.resolve().then(() => source[method](...args)).finally(() => pending.delete(key)));
           return pending.get(key);
         }]));
-        for (const method of ["quote", "refreshMarket", "describe"]) {
+        for (const method of ["previewBook", "quote", "refreshMarket", "describe"]) {
           if (typeof source[method] === "function") shared[method] = (...args) => source[method](...args);
         }
         const ledgerFile = (id) => !file ? void 0 : id === "default" ? file : path.join(path.dirname(file), `battle-${id}.json`);

@@ -162,8 +162,9 @@ function createSimulationBattles({ source, indicatorSource, decisionProvider, fi
     if (!pending.has(key)) pending.set(key, Promise.resolve().then(() => source[method](...args)).finally(() => pending.delete(key)));
     return pending.get(key);
   }]));
+  // Preserve the preview path: practice entry books reject pre-round reads.
   // Quotes belong to individual intents, even when Agents choose the same side.
-  for (const method of ['quote', 'refreshMarket', 'describe']) {
+  for (const method of ['previewBook', 'quote', 'refreshMarket', 'describe']) {
     if (typeof source[method] === 'function') shared[method] = (...args) => source[method](...args);
   }
   const ledgerFile = id => !file ? undefined : id === 'default' ? file : path.join(path.dirname(file), `battle-${id}.json`);

@@ -4,7 +4,7 @@
 
 手机与电脑都能使用的策略模拟应用。抽卡收藏、选择人物开局，在战场查看下注、决策依据和资金变化，在战神榜比较最近一局、最近三局或全部记录。
 
-当前版本 **0.2.0** 使用新版卡片界面。下载 [Android 侧载包](https://github.com/fan944721805-pixel/10u-warrior/releases/download/v0.2.0-preview.1/10u-warrior-0.2.0-android-preview.apk) 或 [电脑 Web 包](https://github.com/fan944721805-pixel/10u-warrior/releases/download/v0.2.0-preview.1/10u-warrior-0.2.0-web.zip)，查看 [版本说明](https://github.com/fan944721805-pixel/10u-warrior/releases/tag/v0.2.0-preview.1)。APK 为 Release 构建、测试证书签名，供侧载试用；使用和升级步骤见 [TRY_ME.md](./TRY_ME.md)。
+当前版本 **0.2.1** 使用新版卡片界面。下载 [Android 侧载包](https://github.com/fan944721805-pixel/10u-warrior/releases/download/v0.2.1-preview.1/10u-warrior-0.2.1-android-preview.apk) 或 [电脑 Web 包](https://github.com/fan944721805-pixel/10u-warrior/releases/download/v0.2.1-preview.1/10u-warrior-0.2.1-web.zip)，查看 [版本说明](https://github.com/fan944721805-pixel/10u-warrior/releases/tag/v0.2.1-preview.1)。APK 为 Release 构建、测试证书签名，供侧载试用；使用和升级步骤见 [TRY_ME.md](./TRY_ME.md)。
 
 - **19 位人物**，每局最多 8 位，各自拥有独立资金和冻结的卡片属性。
 - **本地规则或外部模型**，可选 OpenAI、Claude、DeepSeek 与兼容接口；没有 AI Key 也可使用本地规则。
@@ -81,7 +81,7 @@ npm run android:sync
 | 文档 | 内容 |
 | --- | --- |
 | [新版接入与迁移](./docs/strategy-system/12-production-migration.md) | 已实施项、证据、待完成项和发布状态 |
-| [0.2.0 交付核验](./docs/strategy-system/13-release-audit.md) | 功能、文案、构建及分发的证据清单 |
+| [新版交付核验](./docs/strategy-system/13-release-audit.md) | 功能、文案、构建及分发的证据清单 |
 | [策略系统规格](./docs/STRATEGY_SYSTEM_SPEC.md) | 卡片生成、词条、资金及人物规则 |
 | [技术参考](./docs/REFERENCE.md) | 模拟结算、接口与历史验证 |
 | [Android 构建](./ANDROID_BUILD.md) | 打包、签名及后台服务 |

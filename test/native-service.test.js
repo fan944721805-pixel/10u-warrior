@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const vm = require('node:vm'), fs = require('node:fs');
 const { create } = require('../public/native-service-client');
 const { install } = require('../public/runtime-scheduler');
-const { storageBridge, fixture, loadRuntime } = require('./fixtures/mobile-runtime.cjs');
+const { storageBridge, fixture, loadRuntime, waitForPreparation } = require('./fixtures/mobile-runtime.cjs');
 
 test('native timer cancellation, repeat and callback arguments do not depend on page visibility', () => {
   const native = new Map(), page = { document: { hidden: true } };
@@ -45,7 +45,7 @@ test('two UI clients share one service ledger; leaving/reloading UI does not pau
   assert.equal((await ui2.api.create('Keep custom 名称',config,'background-shared-1')).id,battle.id);
   assert.equal(ui1.api.release(battle.id),false);
   await ui1.api.dispose();
-  await runtime.api.tick();f.setTime(1800000000000);await runtime.api.tick();
+  await runtime.api.tick();await waitForPreparation(runtime.api,battle.id);f.setTime(1800000000000);await runtime.api.tick();
   const snapshot=await ui2.api.report(battle.id);
   assert.equal(snapshot.agents[0].orders.length,1);assert.equal(snapshot.enabled,true);
   assert.equal(snapshot.name,'Keep custom 名称');assert.ok(events.includes('simulation'));

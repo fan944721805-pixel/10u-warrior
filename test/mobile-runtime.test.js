@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { storageBridge, fixture, loadRuntime } = require('./fixtures/mobile-runtime.cjs');
+const { storageBridge, fixture, loadRuntime, waitForPreparation } = require('./fixtures/mobile-runtime.cjs');
 const ROUND = 300000, SLOT = 1800000000000;
 const config = { initialBalance: 100, rounds: 2, period: '5m', agents: [{ id:'A', name:'My phone', strategy:'czBrother', coin:'BNB', maxStakePct:10 }] };
 const post = (runtime, url, body) => runtime.request(url, { method:'POST', body:JSON.stringify(body) });
@@ -32,7 +32,11 @@ test('native bundle uses live market HTTP, shared strategies and durable indepen
   const a=await api.create('手机 Alpha',config,'mobile-create-alpha'), b=await api.create('Phone Beta',config,'mobile-create-beta');
   assert.equal((await api.create('手机 Alpha',config,'mobile-create-alpha')).id,a.id);
   await api.setEnabled(b.id,false);
-  await api.tick(); f.setTime(SLOT); await api.tick();
+  await api.tick(); await waitForPreparation(api,a.id);
+  const prepared=await api.report(a.id);
+  assert.equal(prepared.agents[0].orders.length,0,'Precomputation cannot place an early bet');
+  assert.equal(prepared.agents[0].cash,config.initialBalance,'Precomputation cannot reserve funds');
+  f.setTime(SLOT); await api.tick();
   const opened=await api.report(a.id);
   assert.equal(opened.marketSource,'public-spot');
   assert.equal(opened.agents[0].orders.length,1,JSON.stringify(opened.agents[0].lastDecision));

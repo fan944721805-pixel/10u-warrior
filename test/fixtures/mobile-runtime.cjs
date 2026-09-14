@@ -67,4 +67,15 @@ function loadRuntime(storage, f, ResponseClass = Response) {
   // are mocked here. Device encryption is verified separately on Android.
   return context.WarriorMobileRuntime.create({ now: f.now, autoStart: false });
 }
-module.exports = { storageBridge, fixture, loadRuntime };
+async function waitForPreparation(api,battleId){
+  // tick intentionally starts forecasts without waiting for network completion.
+  // Advance the fake clock only after this scenario's preparation is complete.
+  for(let i=0;i<100;i++){
+    const snapshot=await api.report(battleId),states=snapshot.agents.map(a=>a.preparation?.status);
+    if(states.every(status=>status==='ready'))return;
+    if(states.some(status=>status==='failed'))throw Error('Fixture preparation failed: '+JSON.stringify(states));
+    await new Promise(resolve=>setImmediate(resolve));
+  }
+  throw Error('Fixture preparation did not complete');
+}
+module.exports = { storageBridge, fixture, loadRuntime, waitForPreparation };
